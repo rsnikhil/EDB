@@ -1,0 +1,61 @@
+= EDB, an Economical/Elementary Debugger
+Rishiyur S. Nikhil, Bluespec, Inc. (c) 2024
+:revnumber: v1.00
+:revdate: 2024-08-26
+:sectnums:
+:THIS_FILE: README
+:imagesdir: Doc/Figs
+// :toc:
+// :toclevels: 3
+// :toc-title: Contents
+:keywords: EDB, edbstub, GDB, gdbstub, RSP, Remote Serial Protocol
+
+// ================================================================
+
+[NOTE]
+====
+The source for this document is `{THIS_FILE}.adoc` that can be read
+as-is in a text-editor or terminal window.  It can also be processed
+with the free, open-source `asciidoctor` tool into `{THIS_FILE}.html`
+and then viewed in any browser.
+====
+
+// ================================================================
+
+EDB and edbstub, here, are analogues of GDB and gdbstub, except they
+are much smaller and simpler:
+
+* Easily maintained by one person with basic C programming skills
+* Can be used in practice for basic remote debugging
+* Suitable as a teaching tool
+
+Where GDB and gdbstub communicate using RSP (Remote Serial Protocol)
+which is coded in ASCII strings, EDB and edbstug communicate with (the
+bytes of) one C struct in each direction.
+
+Where GDB and gdbstub have numerous ways to connect, EDB and edbstub
+just use a TCP/IP connection.
+
+Doing 'make' here will create two executables, `edb` and
+`test_edbstub`.  The latter contains a "pretend" CPU to be debugged.
+First run `test_gdbstub` in one window (it will wait, listening on a
+TCP socket).  Then run `edb` in another window, and it will connect to
+`edbstub`, and then enter a command-loop with an "EDB:" prompt.  Type
+"help" to see a repertoire of available commands, then try some of the
+commands.
+
+`edbstub` can be incorporated into a real CPU simulator and hooked up
+so that EDB can be used to debug the CPU.
+
+It is easy to create a hardware version of `edbstub`, and placed on
+real hardware (e.g., FPGA) adjacent to a hardware CPU, and the EDB can
+be used to debug that CPU.  Of course, the communication across the
+SW/HW interface will not be TCP.
+
+Over time we expect gradually to expand the repertoire of interactive
+commands, including ELF-file and Memhex-file loading, resetting the
+remote CPU, etc.
+
+NOTE: EDB is *not* a source-level debugger; for that you'll need to graduate to GDB.
+
+// ================================================================

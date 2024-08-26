@@ -1,2 +1,0 @@
-# EDB
-Economical/Elementary Debugger
