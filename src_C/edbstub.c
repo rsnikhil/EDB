@@ -52,7 +52,7 @@
 // ****************************************************************
 // For debugging this code
 
-static int verbosity = 0;
+int edbstub_verbosity = 0;
 
 // ****************************************************************
 // ****************************************************************
@@ -183,7 +183,7 @@ uint8_t host_try_accept ()
 static
 void host_disconnect ()
 {
-    if (verbosity != 0)
+    if (edbstub_verbosity != 0)
 	fprintf (stdout, "Closing TCP connection\n");
 
     // Close the connected socket
@@ -210,7 +210,7 @@ void host_disconnect ()
 // ================================================================
 // Initialize this C module
 
-static void init_module (uint16_t listen_port)
+void edbstub_init (uint16_t listen_port)
 {
     host_listen (listen_port);
 
@@ -228,13 +228,13 @@ static void init_module (uint16_t listen_port)
 
 void bdpi_edbstub_init (uint16_t listen_port)
 {
-    init_module (listen_port);
+    edbstub_init (listen_port);
 }
 
 // ================================================================
 // Shutdown this C module
 
-static void shutdown_module ()
+void edbstub_shutdown ()
 {
     fprintf (stdout, "Shutting down\n");
     host_disconnect ();
@@ -249,15 +249,14 @@ static void shutdown_module ()
 
 void bdpi_edbstub_shutdown (uint32_t dummy)
 {
-    shutdown_module ();
+    edbstub_shutdown ();
 }
 
 // ================================================================
 // Receive a packet from the debugger to the CPU, into to_CPU_pkt.
 // If no packet received, return Dbg_to_CPU_NOOP in from_CPU_pkt.pkt_type
 
-static
-void recv_to_CPU_pkt (Dbg_to_CPU_Pkt *p_pkt)
+void edbstub_recv_to_CPU_pkt (Dbg_to_CPU_Pkt *p_pkt)
 {
     check_connection (connected_sockfd, __FUNCTION__);
 
@@ -301,7 +300,7 @@ void recv_to_CPU_pkt (Dbg_to_CPU_Pkt *p_pkt)
 	    exit (1);
 	}
     }
-    if (verbosity != 0) {
+    if (edbstub_verbosity != 0) {
 	print_to_CPU_pkt (stdout, "edbstub:received", p_pkt, "\n");
     }
 }
@@ -309,12 +308,12 @@ void recv_to_CPU_pkt (Dbg_to_CPU_Pkt *p_pkt)
 // ----------------
 // BSV view: recv, then convert struct to "standard size" words
 //   import "BDPI"
-//   function Vector #(3, Bit #(64)) bdpi_recv_dbg_to_CPU_pkt ()
+//   function Vector #(3, Bit #(64)) bdpi_edbstub_recv_dbg_to_CPU_pkt ()
 
-void bdpi_recv_dbg_to_CPU_pkt (uint64_t *p_v)
+void bdpi_edbstub_recv_dbg_to_CPU_pkt (uint64_t *p_v)
 {
     Dbg_to_CPU_Pkt pkt_in;
-    recv_to_CPU_pkt (& pkt_in);
+    edbstub_recv_to_CPU_pkt (& pkt_in);
 
     uint64_t v0 = 0;
     v0 =             (pkt_in.rw_size   & 0xFF);
@@ -330,12 +329,11 @@ void bdpi_recv_dbg_to_CPU_pkt (uint64_t *p_v)
 // ================================================================
 // Send a 'dbg_from_CPU_pkt' to the remote debugger
 
-static
-void send_dbg_from_CPU_pkt (const Dbg_from_CPU_Pkt *p_pkt_out)
+void edbstub_send_dbg_from_CPU_pkt (const Dbg_from_CPU_Pkt *p_pkt_out)
 {
     int  fd = connected_sockfd;
 
-    if (verbosity != 0) {
+    if (edbstub_verbosity != 0) {
 	print_from_CPU_pkt (stdout, "edbstub:sending", p_pkt_out, "\n");
     }
 
@@ -357,179 +355,14 @@ void send_dbg_from_CPU_pkt (const Dbg_from_CPU_Pkt *p_pkt_out)
 
 // BSV view: convert "standard size" words into struct, then send
 //   import "BDPI"
-//   function Action bdpi_send_dbg_from_CPU_pkt (Bit #(32) pkt_type, Bit #(64) x)
+//   function Action bdpi_edbstub_send_dbg_from_CPU_pkt (Bit #(32) pkt_type, Bit #(64) x)
 
-void bdpi_send_dbg_from_CPU_pkt (uint32_t pkt_type, uint64_t x)
+void bdpi_edbstub_send_dbg_from_CPU_pkt (uint32_t pkt_type, uint64_t x)
 {
     Dbg_from_CPU_Pkt pkt_out;
     pkt_out.pkt_type = pkt_type;
     pkt_out.payload  = x;
-    send_dbg_from_CPU_pkt (& pkt_out);
+    edbstub_send_dbg_from_CPU_pkt (& pkt_out);
 }
 
-// ****************************************************************
-// ****************************************************************
-// ****************************************************************
-// This 'main' procedure is for standalone testing of this edbstub code.
-// It listens on the server socket for a connection from edb,
-// then pretends to be a CPU, accepting Dbg_to_CPU messages
-// and responding with Dbg_from_CPU messages.
-
-#ifdef TEST
-
-// ================================================================
-
-static uint64_t gprs [32];
-static uint64_t dcsr;
-
-static
-void handle_RW (Dbg_to_CPU_Pkt *p_pkt_in)
-{
-    assert (p_pkt_in->pkt_type == Dbg_to_CPU_RW);
-
-    // Response packet
-    Dbg_from_CPU_Pkt pkt_out;
-
-    // Default response
-    memset (& pkt_out, 0, sizeof (Dbg_from_CPU_Pkt));
-    pkt_out.pkt_type = Dbg_from_CPU_ERR;
-    pkt_out.payload  = 0xDABACAFE;    // bogus value
-
-    // Prepare response
-    if (p_pkt_in->rw_target == Dbg_RW_GPR) {
-	if (p_pkt_in->rw_addr >= 32)
-	    pkt_out.pkt_type = Dbg_from_CPU_ERR;
-	else if (p_pkt_in->rw_op == Dbg_RW_READ) {
-	    pkt_out.pkt_type = Dbg_from_CPU_RW_OK;
-	    if (p_pkt_in->rw_addr == 0)
-		pkt_out.payload = 0;
-	    else
-		pkt_out.payload = gprs [p_pkt_in->rw_addr];
-	}
-	else {
-	    // Dbg_RW_WRITE
-	    pkt_out.pkt_type = Dbg_from_CPU_RW_OK;
-	    if (p_pkt_in->rw_addr != 0)
-		gprs [p_pkt_in->rw_addr] = p_pkt_in->rw_wdata;
-	}
-    }
-    else if (p_pkt_in->rw_target == Dbg_RW_CSR) { 
-	// Only handle DCSR
-	if (p_pkt_in->rw_addr == addr_csr_dcsr) {
-	    pkt_out.pkt_type = Dbg_from_CPU_RW_OK;
-	    if (p_pkt_in->rw_op == Dbg_RW_READ)
-		pkt_out.payload = dcsr;
-	    else
-		dcsr = p_pkt_in->rw_wdata;
-	}
-    }
-    else if (p_pkt_in->rw_target == Dbg_RW_FPR) { 
-	// default err response
-    }
-    else {
-	assert (p_pkt_in->rw_target == Dbg_RW_MEM);
-	pkt_out.pkt_type = Dbg_from_CPU_RW_OK;
-	pkt_out.payload  = 0xAAAAAAAA;    // bogus mem value
-    }
-
-    // Send response
-    send_dbg_from_CPU_pkt (& pkt_out);
-}
-
-// ================================================================
-
-static
-void send_err_rsp (Dbg_to_CPU_Pkt *p_pkt_in)
-{
-    Dbg_from_CPU_Pkt pkt_out;
-    memset (& pkt_out, 0, sizeof (Dbg_from_CPU_Pkt));
-    pkt_out.pkt_type = Dbg_from_CPU_ERR;
-    send_dbg_from_CPU_pkt (& pkt_out);
-}
-
-// ================================================================
-
-static
-void handle_RESUMEREQ (Dbg_to_CPU_Pkt *p_pkt_in)
-{
-    assert (p_pkt_in->pkt_type == Dbg_to_CPU_RESUMEREQ);
-
-    Dbg_from_CPU_Pkt pkt_out;
-    memset (& pkt_out, 0, sizeof (Dbg_from_CPU_Pkt));
-
-    // Send RUNNING to confirm running
-    pkt_out.pkt_type = Dbg_from_CPU_RUNNING;
-    send_dbg_from_CPU_pkt (& pkt_out);
-
-    if ((dcsr & mask_dcsr_step) == 0) {
-	// "run the CPU" for some time, but listen for HALTREQ requests (^C/abort)
-	// If no HALTREQ, pretend to halt on an EBREAK
-	pkt_out.payload = halt_cause_EBREAK;
-	for (int j = 0; j < 10; j++) {
-	    fprintf (stdout, "Running ...\n");
-	    sleep (1);
-	    // Poll for incoming packet
-	    recv_to_CPU_pkt (p_pkt_in);
-	    if (p_pkt_in->pkt_type == Dbg_to_CPU_NOOP)
-		// No packet
-		continue;
-	    else if (p_pkt_in->pkt_type == Dbg_to_CPU_HALTREQ) {
-		pkt_out.payload = halt_cause_HALTREQ;
-		break;
-	    }
-	    else {
-		fprintf (stdout, "WARNING: unexpected packet when running.\n");
-		fprintf (stdout, "  When running, only HALTREQ packets expected.\n");
-		exit (1);
-	    }
-	}
-    }
-    else {
-	// STEPI; pretend we've execute one instruction
-	pkt_out.payload = halt_cause_STEP;
-    }
-    pkt_out.pkt_type = Dbg_from_CPU_HALTED;
-    send_dbg_from_CPU_pkt (& pkt_out);
-}
-
-// ================================================================
-
-int main (int argc, char *argv [])
-{
-    uint16_t listen_port = 30000;
-    init_module (listen_port);
-
-    for (int j = 0; j < 32; j++)
-	gprs [j] = 0;
-
-    // This loop represents a fake CPU for standalone testing of this C code.
-    // Receive packets from the debugger.
-    // Send simulated response packets to the debugger.
-    Dbg_to_CPU_Pkt  pkt_in;
-    while (true) {
-	recv_to_CPU_pkt (& pkt_in);
-	if (pkt_in.pkt_type == Dbg_to_CPU_NOOP) {
-	    // No packet to process
-	    usleep (1000);
-	    continue;
-	}
-
-	// Send response
-	switch (pkt_in.pkt_type) {
-	case Dbg_to_CPU_RESUMEREQ: handle_RESUMEREQ (& pkt_in); break;
-	case Dbg_to_CPU_RW:        handle_RW (& pkt_in);        break;
-	case Dbg_to_CPU_QUIT:      goto done;
-	default:                   send_err_rsp (& pkt_in);     break;
-	}
-    }
-
- done:
-    shutdown_module ();
-    return 0;
-}
-
-#endif
-
-// ****************************************************************
-// ****************************************************************
 // ****************************************************************

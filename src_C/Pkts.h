@@ -62,13 +62,27 @@ void print_from_CPU_pkt (FILE                   *fd,
 			 const char             *post);
 
 // ****************************************************************
-// DCSR params (these are standard RISC-V definitions)
+// DCSR details (these are standard RISC-V definitions)
 
-#define addr_csr_dcsr  0x7b0
-#define mask_dcsr_step (1 << 2)
+#define addr_csr_dcsr 0x7b0
+#define addr_csr_dpc  0x7b1
 
-#define halt_cause_EBREAK   1
-#define halt_cause_STEP     4
-#define halt_cause_HALTREQ  3
+#define mask_dcsr_step     (1 << 2)
+#define mask_dcsr_ebreakvs (1 << 17)
+#define mask_dcsr_ebreakvu (1 << 16)
+#define mask_dcsr_ebreakm  (1 << 15)
+#define mask_dcsr_ebreaks  (1 << 13)
+#define mask_dcsr_ebreaku  (1 << 12)
+
+#define mask_dcsr_cause  (0x7 << 6)
+
+#define DCSR_CAUSE(dcsr) (((dcsr) >> 6) & 0x7)
+#define dcsr_cause_EBREAK        1
+#define dcsr_cause_TRIGGER       2
+#define dcsr_cause_HALTREQ       3
+#define dcsr_cause_STEP          4
+#define dcsr_cause_RESETHALTREQ  5
+#define dcsr_cause_GROUP         6
+#define dcsr_cause_OTHER         7
 
 // ****************************************************************

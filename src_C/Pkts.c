@@ -77,10 +77,10 @@ void print_from_CPU_pkt (FILE *fd,
     case Dbg_from_CPU_HALTED:
 	fprintf (fd, " HALTED; cause ");
 	switch (p_pkt->payload) {
-	case halt_cause_EBREAK:  fprintf (fd, " EBREAK");  break;
-	case halt_cause_STEP:    fprintf (fd, " STEP");    break;
-	case halt_cause_HALTREQ: fprintf (fd, " HALTREQ"); break;
-	default:                 fprintf (fd, " %" PRId64, p_pkt->payload);
+	case dcsr_cause_EBREAK:  fprintf (fd, "EBREAK");  break;
+	case dcsr_cause_STEP:    fprintf (fd, "STEP");    break;
+	case dcsr_cause_HALTREQ: fprintf (fd, "HALTREQ"); break;
+	default:                 fprintf (fd, "%" PRId64, p_pkt->payload);
 	}
 	break;
     case Dbg_from_CPU_ERR: fprintf (fd, " ERR %0" PRId64 "", p_pkt->payload); break;

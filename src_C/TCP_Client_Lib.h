@@ -6,12 +6,6 @@
 
 // ================================================================
 
-#define   status_err      0
-#define   status_ok       1
-#define   status_unavail  2
-
-// ================================================================
-
 extern
 uint32_t  tcp_client_open (const char *server_host, const uint16_t server_port);
 

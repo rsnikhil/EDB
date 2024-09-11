@@ -37,6 +37,7 @@
 // ----------------
 // Project includes
 
+#include "Status.h"
 #include "TCP_Client_Lib.h"
 
 // ================================================================
@@ -47,17 +48,17 @@ static int sockfd = 0;
 // ================================================================
 // Open a TCP socket as a client connected to specified remote
 // listening server socket.
-// Return status_err or status_ok.
+// Return STATUS_ERR or STATUS_OK.
 
 uint32_t  tcp_client_open (const char *server_host, const uint16_t server_port)
 {
     if (server_host == NULL) {
-	fprintf (stdout, "%s: server_host is NULL\n", __FUNCTION__);
-	return status_err;
+	fprintf (stdout, "ERROR: %s: server_host is NULL\n", __FUNCTION__);
+	return STATUS_ERR;
     }
     if (server_port == 0) {
-	fprintf (stdout, "%s: server_port is 0\n", __FUNCTION__);
-	return status_err;
+	fprintf (stdout, "ERROR: %s: server_port is 0\n", __FUNCTION__);
+	return STATUS_ERR;
     }
 
     fprintf (stdout, "%s: connecting to '%s' port %0d\n",
@@ -65,8 +66,8 @@ uint32_t  tcp_client_open (const char *server_host, const uint16_t server_port)
 
     // Create the socket
     if ( (sockfd = socket (AF_INET, SOCK_STREAM, 0)) < 0 ) {
-	fprintf (stdout, "%s: Error creating socket.\n", __FUNCTION__);
-	return status_err;
+	fprintf (stdout, "ERROR: %s: unable to create socket.\n", __FUNCTION__);
+	return STATUS_ERR;
     }
 
     struct sockaddr_in servaddr;  // socket address structure
@@ -78,14 +79,14 @@ uint32_t  tcp_client_open (const char *server_host, const uint16_t server_port)
 
     // Set the remote IP address
     if (inet_aton (server_host, & servaddr.sin_addr) <= 0 ) {
-	fprintf (stdout, "%s: Invalid remote IP address.\n", __FUNCTION__);
-	return status_err;
+	fprintf (stdout, "ERROR: %s: Invalid remote IP address.\n", __FUNCTION__);
+	return STATUS_ERR;
     }
 
     // connect() to the remote server
     if (connect (sockfd, (struct sockaddr *) &servaddr, sizeof(servaddr) ) < 0 ) {
-	fprintf (stdout, "%s: Error calling connect()\n", __FUNCTION__);
-	return status_err;
+	fprintf (stdout, "ERROR: %s: failed connect()\n", __FUNCTION__);
+	return STATUS_ERR;
     }
 
     // This code copied from riscv-openocd's jtag_vpi.c, where they say:
@@ -97,7 +98,7 @@ uint32_t  tcp_client_open (const char *server_host, const uint16_t server_port)
     }
 
     fprintf (stdout, "%s: connected\n", __FUNCTION__);
-    return status_ok;
+    return STATUS_OK;
 }
 
 // ================================================================
@@ -106,13 +107,13 @@ uint32_t  tcp_client_open (const char *server_host, const uint16_t server_port)
 uint32_t  tcp_client_close (uint32_t dummy)
 {
     if (sockfd > 0) {
-	fprintf (stdout, "%s\n", __FUNCTION__);
+	// fprintf (stdout, "%s\n", __FUNCTION__);
 	shutdown (sockfd, SHUT_RDWR);
 	close (sockfd);
 	sleep (1);
     }
 
-    return  status_ok;
+    return  STATUS_OK;
 }
 
 // ================================================================
@@ -126,14 +127,14 @@ uint32_t  tcp_client_send (const uint32_t data_size, const uint8_t *data)
 
     if (n < 0) {
 	fprintf (stdout, "ERROR: %s() = %0d\n", __FUNCTION__, n);
-	return status_err;
+	return STATUS_ERR;
     }
-    return status_ok;
+    return STATUS_OK;
 }
 
 // ================================================================
 // Recv a message
-// Return status_ok/status_unavail (no input data available)/status_err
+// Return STATUS_OK/STATUS_UNAVAIL (no input data available)/STATUS_ERR
 
 uint32_t  tcp_client_recv (bool do_poll, const uint32_t data_size, uint8_t *data)
 {
@@ -147,12 +148,12 @@ uint32_t  tcp_client_recv (bool do_poll, const uint32_t data_size, uint8_t *data
 	int n = poll (& x_pollfd, 1, 0);
 
 	if (n < 0) {
-	    fprintf (stdout, "ERROR: %s: poll () failed\n", __FUNCTION__);
-	    return status_err;
+	    fprintf (stdout, "ERROR: %s: failed poll ()\n", __FUNCTION__);
+	    return STATUS_ERR;
 	}
 
 	if ((x_pollfd.revents & POLLRDNORM) == 0) {
-	    return status_unavail;
+	    return STATUS_UNAVAIL;
 	}
     }
 
@@ -162,13 +163,13 @@ uint32_t  tcp_client_recv (bool do_poll, const uint32_t data_size, uint8_t *data
 	int n = read (sockfd, & (data [n_recd]), (data_size - n_recd));
 	if ((n < 0) && (errno != EAGAIN) && (errno != EWOULDBLOCK)) {
 	    fprintf (stdout, "ERROR: %s: read () failed on byte 0\n", __FUNCTION__);
-	    return status_err;
+	    return STATUS_ERR;
 	}
 	else if (n > 0) {
 	    n_recd += n;
 	}
     }
-    return status_ok;
+    return STATUS_OK;
 }
 
 // ================================================================
