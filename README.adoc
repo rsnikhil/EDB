@@ -1,14 +1,14 @@
 = EDB, an Economical/Elementary Debugger
 Rishiyur S. Nikhil, Bluespec, Inc. (c) 2024
-:revnumber: v1.00
-:revdate: 2024-08-26
+:revnumber: v1.01
+:revdate: 2024-09-11
 :sectnums:
 :THIS_FILE: README
 :imagesdir: Doc/Figs
 // :toc:
 // :toclevels: 3
 // :toc-title: Contents
-:keywords: EDB, edbstub, GDB, gdbstub, RSP, Remote Serial Protocol
+:keywords: EDB, edbstub, GDB, gdbstub, RSP, Remote Serial Protocol, LLDB
 
 // ================================================================
 
@@ -21,41 +21,84 @@ and then viewed in any browser.
 ====
 
 // ================================================================
+== Overview
 
-EDB and edbstub, here, are analogues of GDB and gdbstub, except they
-are much smaller and simpler:
+EDB is an elementary debugger for debugging a RISC-V CPU
+implementation ("DUT") directly.  EDB and edbstub, here, are
+conceptually similar to GDB and gdbstub, except much smaller and
+simpler:
 
 * Easily maintained by one person with basic C programming skills
 * Can be used in practice for basic remote debugging
 * Suitable as a teaching tool
 
-Where GDB and gdbstub communicate using RSP (Remote Serial Protocol)
-which is coded in ASCII strings, EDB and edbstug communicate with (the
-bytes of) one C struct in each direction.
+A later section of this document describes how to upgrade from EDB to
+GDB/LLDB.
 
-Where GDB and gdbstub have numerous ways to connect, EDB and edbstub
-just use a TCP/IP connection.
+Doing 'make' here will create one executables, `edb`, which is the EDB
+debugger program.  The DUT (remote CPU) must be started first (usually
+in another window), whether in simulation or hardware, and it should
+start listening on a TCP port as a TCP server.  Then, run `edb`, which
+will run as a TCP client and connect to that TCP port.
 
-Doing 'make' here will create two executables, `edb` and
-`test_edbstub`.  The latter contains a "pretend" CPU to be debugged.
-First run `test_gdbstub` in one window (it will wait, listening on a
-TCP socket).  Then run `edb` in another window, and it will connect to
-`edbstub`, and then enter a command-loop with an "EDB:" prompt.  Type
-"help" to see a repertoire of available commands, then try some of the
-commands.
+Once connected, `edb` enters an interactive command loop with an
+`EDB:` prompt.  Type `help` for a list of available commands,
+including `quit` to quit.  Over time we expect gradually to expand the
+repertoire of interactive commands, including Memhex-file loading,
+resetting the remote CPU, etc.
 
-`edbstub` can be incorporated into a real CPU simulator and hooked up
-so that EDB can be used to debug the CPU.
+The hostname and TCP port for the server are currently wired into
+`edb.c` as:
 
-It is easy to create a hardware version of `edbstub`, and placed on
-real hardware (e.g., FPGA) adjacent to a hardware CPU, and the EDB can
-be used to debug that CPU.  Of course, the communication across the
-SW/HW interface will not be TCP.
+    char     server_hostname [] = "127.0.0.1";    // (localhost)
+    uint16_t server_listen_port = 30000;
 
-Over time we expect gradually to expand the repertoire of interactive
-commands, including ELF-file and Memhex-file loading, resetting the
-remote CPU, etc.
+Modify these and rebuild `edb` if needed.
 
-NOTE: EDB is *not* a source-level debugger; for that you'll need to graduate to GDB.
+// ================================================================
+== edbstubs (software and hardware)
+
+EDB-DUT communication uses packets described as C structs in
+`src_C/Dbg_Pkts.h`.  There is one type of struct for EDB-to-DUT, and
+another for EDB-from-DUT.  EDB does not care whether the remote DUT
+server fronts a software RISC-V simulation, a hardware simulation of
+RISC-V hardware, or actual RISC-V hardware, as long as it communicates
+using such packets.
+
+The file `test/edbstub.c` is an example of basic C server functions
+that can be incorporated into the front-end of a simulator or hardware
+controller.
+
+It is easy to create a hardware version of `edbstub.c`.
+
+// ================================================================
+== Testing
+
+For testing EDB itself, and testing EDB-to-server communications, the
+`test/` directory contains a standalone server program
+`test_edbstub.c` containing a "pretend" CPU, and using the
+communications defined in `edbstub.c`.  `make` in the `test/`
+directory creates `exe_test_edbstub`.  It can act as a server for EDB
+and will respond to EDB commands.
+
+// ================================================================
+== Upgrading to GDB, LLDB, ..
+
+EDB is very minimal, and only debugs machine code.  It is *not* a
+source-level debugger, nor does it do scripting, nor support any
+communication mechanism other than TCP.  For these richer facilities,
+you'll need GDB, LLDB or some such more full-featured debugger.
+
+GDB/LLDB have a "remote debugging" mode where they can connect via TCP
+(or other communication mechanism) to a "gdbstub" which controls the
+DUT.  The GDB-to-gdbstub communication uses an ASCII protocol called
+RSP (Remote Serial Protocol.  Details can be found easily on the web.
+
+A gdbstub conceptually has a front-end to communicate with GDB, and a
+back-end to control the DUT.  Back-ends typically produce JTAG and/or
+DMI (RISC-V Debug Module Interface) transactions.  If you modify an
+existing gdbstub back end so that it sends/receives the packets
+described in `src_C/Dbg_Pkts.h`, then you can connect gdbstub to a DUT
+where you were using EDB, and thus upgrade to GDB/LLDB.
 
 // ================================================================
