@@ -62,6 +62,7 @@
 #include "Status.h"
 #include "TCP_Client_Lib.h"
 #include "Dbg_Pkts.h"
+#include "ISA_Defs.h"
 #include "loadELF.h"
 
 // ****************************************************************
@@ -86,6 +87,8 @@ bool is_s1_prefix_of_s2 (const char *s1, const char *s2)
 }
 
 typedef enum {CMD_HELP,
+	      CMD_HELP_GPR_NAMES,
+	      CMD_HELP_CSR_NAMES,
 	      CMD_HISTORY,
 	      CMD_HALT,
 	      CMD_LOADELF,
@@ -93,6 +96,7 @@ typedef enum {CMD_HELP,
 	      CMD_CONTINUE, CMD_STEPI,
 	      CMD_RGPR, CMD_RCSR, CMD_RMEM,
 	      CMD_WGPR, CMD_WCSR, CMD_WMEM,
+	      CMD_DUMPMEM,
 	      CMD_QUIT,
 	      CMD_ERR} Cmd_Code;
 
@@ -102,41 +106,44 @@ typedef struct {
     char     *cmd_doc;
 } Cmd;
     
-// WARNING!!! these should be in the same order as in enum Cmd_Code!
 Cmd cmds []
-= { { CMD_HELP,     "help",     "                    Print this help" },
-    { CMD_HISTORY,  "history",  "                    Show command-line history" },
-    { CMD_HALT,     "halt",     "                    Halt exec of running CPU" },
-    { CMD_LOADELF,  "loadelf",  "<elf file>          Load ELF file" },
-    { CMD_BRK,      "break",    "<addr>              Set a breakpoint" },
-    { CMD_RMBRK,    "rmbreak",  "<addr>              Remove a breakpoint" },
-    { CMD_LSBRKS,   "lsbreaks", "                    List breakpoints" },
-    { CMD_CONTINUE, "continue", "                    Resume exec of halted CPU" },
-    { CMD_STEPI,    "stepi",    "                    Exec exactly 1 instruction of halted CPU" },
-    { CMD_RGPR,     "rgpr",     "<gprnum>            Read  GPR" },
-    { CMD_RCSR,     "rcsr",     "<csraddr>           Read  CSR" },
-    { CMD_RMEM,     "rmem",     "<memaddr>           Read  Mem" },
-    { CMD_WGPR,     "wgpr",     "<gprnum>  <wdata>   Write GPR" },
-    { CMD_WCSR,     "wcsr",     "<csraddr> <wdata>   Write CSR " },
-    { CMD_WMEM,     "wmem",     "<memaddr> <wdata>   Write Mem" },
-    { CMD_QUIT,     "quit",     "                    Quit EDB" },
-    { CMD_ERR,      "",         "<unrecognized command>" } };
+= { { CMD_HELP,           "help                  ", "Print this help" },
+    { CMD_HELP_GPR_NAMES, "GPR_Names             ", "Show GPR symbolic names" },
+    { CMD_HELP_CSR_NAMES, "CSR_Names             ", "Show CSR symbolic names" },
+    { CMD_HISTORY,        "history               ", "Show command-line history" },
+    { CMD_HALT,           "halt                  ", "Halt exec of running CPU" },
+    { CMD_LOADELF,        "loadelf <elf file>    ", "Load ELF file" },
+    { CMD_BRK,            "break <addr>          ", "Set a breakpoint" },
+    { CMD_RMBRK,          "rmbreak <addr>        ", "Remove a breakpoint" },
+    { CMD_LSBRKS,         "lsbreaks              ", "List breakpoints" },
+    { CMD_CONTINUE,       "continue              ", "Resume exec of halted CPU" },
+    { CMD_STEPI,          "stepi                 ", "Exec 1 instruction of halted CPU" },      
+    { CMD_RGPR,           "rgpr <gprnum>         ", "Read GPR" },
+    { CMD_WGPR,           "wgpr <gprnum>  <wdata>", "Write GPR" },
+    { CMD_RCSR,           "rcsr <csraddr>        ", "Read CSR" },
+    { CMD_WCSR,           "wcsr <csraddr> <wdata>", "Write CSR " },
+    { CMD_RMEM,           "rmem <memaddr>        ", "Read Mem (one word)" },
+    { CMD_WMEM,           "wmem <memaddr> <wdata>", "Write Mem (one word)" },
+    { CMD_DUMPMEM,        "dumpmem  <a1>  <a2>   ", "Read memory addr a1 through a2"},
+    { CMD_QUIT,           "quit                  ", "Quit EDB" },
+    { CMD_ERR,            "",                       "<bogus sentinel>" } };
 
 #define CHARBUF_SIZE 1024
 
 // Read a command from cmdline.
-// Return the index of the command in 'cmds[]' array.
+// Return a pointer to a Cmd struct if successful (NULL if no match)
 // In 'p_index', return index in cmdline of next char beyond the command
 
 static
-int parse_command (const char *cmdline, int *p_index)
+Cmd *parse_command (const char *cmdline, int *p_index)
 {
-    int  cmd, n;
+    int  n;
     char cmd_s    [CHARBUF_SIZE];
 
+    // Scan first word in command line
     n = sscanf (cmdline, "%s%n", cmd_s, p_index);
-    if (n == 0)
-	return CMD_ERR;
+    if (n != 1)
+	return NULL;
 
     // Search for command in command list
     int j_match = -1;
@@ -146,15 +153,14 @@ int parse_command (const char *cmdline, int *p_index)
 		fprintf (stdout, "  Ambigouous match '%s' and '%s'\n",
 			 cmds [j_match].cmd_name,
 			 cmds [j].cmd_name);
-		return CMD_ERR;
+		return NULL;
 	    }
 	    j_match = j;
 	}
     if (j_match == -1)
-	cmd = CMD_ERR;
-    else
-	cmd = j_match;
-    return cmd;
+	return NULL;
+
+    return & (cmds [j_match]);
 }	
 
 static
@@ -169,21 +175,73 @@ int parse_1_int_arg (const char *cmdline, uint64_t *p_arg1)
 }
 
 static
-int parse_2_int_args (const char *cmdline, uint64_t *p_arg1, uint64_t *p_arg2)
-{
-    int n = sscanf (cmdline, "%" SCNi64 " %" SCNi64, p_arg1, p_arg2);
-    if (n == 2)
-	return STATUS_OK;
-
-    fprintf (stdout, "ERROR: could not parse two int args\n");
-    return STATUS_ERR;
-}
-
-static
 int parse_1_string_arg (const char *cmdline, char *p_arg)
 {
     int n = sscanf (cmdline, "%s", p_arg);
     return ((n == 1) ? STATUS_OK : STATUS_ERR);
+}
+
+// ----------------------------------------------------------------
+// Parse GPR number
+
+static
+int parse_GPR_num (const char *cmdline, const int index, uint64_t *p_gpr_num, int *p_index)
+{
+    int delta;
+    // Get first word on line, and index of char beyond it
+    char word [CHARBUF_SIZE];
+    int n = sscanf (cmdline + index, "%s%n", & word [0], & delta);
+    if (n != 1) return STATUS_ERR;
+    *p_index = index + delta;
+
+    // Check for GPR ABI name
+    for (int j = 0; GPR_ABI_Names [j].name != NULL; j++)
+	if (strcmp (word, GPR_ABI_Names [j].name) == 0) {
+	    *p_gpr_num = GPR_ABI_Names [j].val;
+	    goto done;
+	}
+
+    // Scan for 'xN' name
+    n = sscanf (word, "x%" PRId64, p_gpr_num);
+    if (n == 1)
+	goto done;
+
+    // Scan an ordinary integer in decimal or hex format, and index of char beyond it
+    n = sscanf (cmdline + index, "%" PRIi64 "%n", p_gpr_num, & delta);
+    if (n != 1) return STATUS_ERR;
+    *p_index = index + delta;
+
+ done:
+    return ((*p_gpr_num <= 31) ? STATUS_OK : STATUS_ERR);
+}
+
+// ----------------------------------------------------------------
+// Parse CSR addr
+
+static
+int parse_CSR_addr (const char *cmdline, const int index, uint64_t *p_csr_addr, int *p_index)
+{
+    int delta;
+    // Get first word on line, and index of char beyond it
+    char word [CHARBUF_SIZE];
+    int n = sscanf (cmdline + index, "%s%n", & word [0], & delta);
+    if (n != 1) return STATUS_ERR;
+    *p_index = index + delta;
+
+    // Check for CSR name
+    for (int j = 0; CSR_Names [j].name != NULL; j++)
+	if (strcmp (word, CSR_Names [j].name) == 0) {
+	    *p_csr_addr = CSR_Names [j].val;
+	    goto done;
+	}
+
+    // Scan an ordinary integer in decimal or hex format, and index of char beyond it
+    n = sscanf (cmdline + index, "%" PRIi64 "%n", p_csr_addr, & delta);
+    if (n != 1) return STATUS_ERR;
+    *p_index = index + delta;
+
+ done:
+    return ((*p_csr_addr <= 0xFFF) ? STATUS_OK : STATUS_ERR);
 }
 
 // ****************************************************************
@@ -378,10 +436,35 @@ void exec_help ()
 {
     fprintf (stdout, "  Commands:\n");
     for (int j = 0; cmds [j].cmd_code != CMD_ERR; j++)
-	fprintf (stdout, "    %-10s  %s\n", cmds [j].cmd_name, cmds [j].cmd_doc);
+	fprintf (stdout, "    %s  %s\n", cmds [j].cmd_name, cmds [j].cmd_doc);
     fprintf (stdout, "  Commands are not case-sensitive.\n");
     fprintf (stdout, "  Commands can be abbreviated to any unique prefix.\n");
-    fprintf (stdout, "  Numbers can be written in decimal or in hex (0xNNNN).\n");
+    fprintf (stdout, "  Integers can be written in decimal or in hex (0xNNNN).\n");
+    fprintf (stdout, "  For r/w GPR, GPR addr can be symbolic 'xN' name, ABI name or int\n");
+    fprintf (stdout, "  For r/w CPR, CSR addr can be symbolic name or int\n");
+}
+
+static
+void exec_help_GPR_Names ()
+{
+    fprintf (stdout, "GPR symbolic names:\n");
+    fprintf (stdout, "    Symbolic         Hex  Decimal\n");
+    for (int j = 0; GPR_ABI_Names [j].name != NULL; j += 1) {
+	fprintf (stdout, "    %4s  x%0d", GPR_ABI_Names [j].name, GPR_ABI_Names [j].val);
+	if (GPR_ABI_Names [j].val < 10) fprintf (stdout, " ");
+	fprintf (stdout, "        0x%0x", GPR_ABI_Names [j].val);
+	if (GPR_ABI_Names [j].val < 0x10) fprintf (stdout, " ");
+	fprintf (stdout, " %0d\n", GPR_ABI_Names [j].val);
+    }
+}
+
+static
+void exec_help_CSR_Names ()
+{
+    fprintf (stdout, "CSR symbolic names:\n");
+    fprintf (stdout, "               Name    Addr\n");
+    for (int j = 0; CSR_Names [j].name != NULL; j++)
+	fprintf (stdout, "    %15s    0x%03x\n", CSR_Names [j].name, CSR_Names [j].val);
 }
 
 // ================================================================
@@ -618,16 +701,34 @@ void exec_ls_breakpoints ()
 
 static
 void exec_read (const char         *cmdline,
+		int                 index,
 		const Dbg_RW_Target target,
 		const Dbg_RW_Size   rw_size)
 {
-    uint64_t addr, rdata;
-    int status = parse_1_int_arg (cmdline, & addr);
+    int      status, index2;
+    uint64_t addr;
+    if (target == Dbg_RW_GPR) {
+	status = parse_GPR_num (cmdline, index, & addr, & index2);
+	if (status == STATUS_OK)
+	    fprintf (stdout, "Reading GPR x%0" PRId64 "\n", addr);
+    }
+    else if (target == Dbg_RW_CSR) {
+	status = parse_CSR_addr (cmdline, index, & addr, & index2);
+	if (status == STATUS_OK)
+	    fprintf (stdout, "Reading CSR 0x%0" PRIx64 "\n", addr);
+    }
+    else {
+	assert (target == Dbg_RW_MEM);
+	status = parse_1_int_arg (cmdline + index, & addr);
+	if (status == STATUS_OK)
+	    fprintf (stdout, "Reading Mem [0x%0" PRIx64 "]\n", addr);
+    }
     if (status != STATUS_OK) {
-	fprintf (stdout, "ERROR: unable to read 1 int arg (GPR num/CSR addr/Mem addr)\n");
+	fprintf (stdout, "ERROR: unable to read GPR num/CSR addr/Mem addr\n");
 	return;
     }
 
+    uint64_t rdata;
     status = read_internal (target, addr, rw_size, & rdata);
     if (status == STATUS_OK)
 	fprintf (stdout, "  Read-value: 0x%0" PRIx64 "\n", rdata);
@@ -705,17 +806,44 @@ int exec_read_buf (const uint64_t  start_addr,
 
 static
 void exec_write (const char         *cmdline,
+		int                  index,
 		 const Dbg_RW_Target target,
 		 const Dbg_RW_Size   rw_size)
 {
-    uint64_t addr, wdata;
-    int status = parse_2_int_args (cmdline, & addr, & wdata);
+    // Parse address
+    int      status, index2;
+    uint64_t addr;
+    if (target == Dbg_RW_GPR) {
+	status = parse_GPR_num (cmdline, index, & addr, & index2);
+	if (status == STATUS_OK)
+	    fprintf (stdout, "Writing GPR x%0" PRId64 "\n", addr);
+    }
+    else if (target == Dbg_RW_CSR) {
+	status = parse_CSR_addr (cmdline, index, & addr, & index2);
+	if (status == STATUS_OK)
+	    fprintf (stdout, "Writing CSR 0x%0" PRIx64 "\n", addr);
+    }
+    else {
+	assert (target == Dbg_RW_MEM);
+	int n = sscanf (cmdline + index, "%" SCNi64 "%n", & addr, & index2);
+	status = ((n == 1) ? STATUS_OK : STATUS_ERR);
+	index2 += index;
+	if (status == STATUS_OK)
+	    fprintf (stdout, "Writing Mem [0x%0" PRIx64 "]\n", addr);
+    }
     if (status != STATUS_OK) {
-	fprintf (stdout, "ERROR: unable to read 2 int args:\n");
-	fprintf (stdout, "       1. GPR num/CSR addr/Mem addr\n");
-	fprintf (stdout, "       2. 32-bit write-data\n");
+	fprintf (stdout, "ERROR: unable to read GPR num/CSR addr/Mem addr\n");
 	return;
     }
+
+    // Parse w-data
+    uint64_t wdata;
+    int n = sscanf (cmdline + index2, "%" SCNi64, & wdata);
+    if (n != 1) {
+	fprintf (stdout, "ERROR: unable to parse w-data (to be written to GPR/CSR/mem)\n");
+	return;
+    }
+    fprintf (stdout, "    wdata = %0" PRIx64 "\n", wdata);
 
     status = write_internal (target, addr, rw_size, wdata);
     if (status == STATUS_OK)
@@ -787,6 +915,149 @@ int exec_write_buf (const uint64_t  start_addr,
 	if (status != STATUS_OK) return status;
     }
     return STATUS_OK;
+}
+
+// ================================================================
+// Dump mem addr a1 through a2
+// Print 16 bytes per line, MSB ... LSB, with LSB aligned to 4'b0000
+// Print '--' for bytes below addr1 and above addr2
+
+static bool      valid [16];
+static uint8_t   buf [16];
+static uint64_t  buf_addr;
+
+static
+void flush_buf ()
+{
+    fprintf (stdout, "    ");
+    for (int j = 15; j >= 0; j--) {
+	if ((j == 11) || (j == 7) || (j == 3))
+	    fprintf (stdout, "  ");
+	if (valid [j])
+	    fprintf (stdout, " %02x", buf [j]);
+	else
+	    fprintf (stdout, " --");
+	valid [j] = false;
+    }
+    fprintf (stdout, " @ %08" PRIx64 "\n", ((buf_addr >> 4) << 4));
+}
+
+static
+void append_bytes (const uint64_t addr, const int n_bytes, uint64_t data)
+{
+    // First time
+    if (buf_addr == -1) buf_addr = addr;
+
+    // Check addresses are sequential
+    assert (addr == buf_addr);
+    assert ((n_bytes == 1) || (n_bytes == 2) || (n_bytes == 4) || (n_bytes == 8));
+
+    // fprintf (stdout, "append_bytes: %0" PRIx64 "  %0d bytes  %0" PRIx64 "\n",
+    //	     addr, n_bytes, data);
+
+    // Buffer the new bytes
+    for (int j = 0; j < n_bytes; j++) {
+	int k = (addr & 0xF) + j;
+	buf [k]   = (data & 0xFF);
+	valid [k] = true;
+	data      = (data >> 8);
+    }
+    if (((addr + n_bytes - 1) & 0xF) == 0xF)
+	flush_buf ();
+
+    buf_addr += n_bytes;
+}
+
+static
+void exec_dumpmem (const char *cmdline, int index)
+{
+    uint64_t  addr1, addr2;
+    int n = sscanf (cmdline + index, "%" SCNi64 "%" SCNi64, & addr1, & addr2);
+    if (n != 2) {
+	fprintf (stdout, "ERROR: unable to parse starting and/or ending addr\n");
+	return;
+    }
+    fprintf (stdout, "Dumping mem from addr1 %0" PRIx64 " to addr2 %0" PRIx64 "\n",
+	     addr1, addr2);
+    if (addr1 >= addr2) {
+	fprintf (stdout, "Nothing to print: addr1 (%0" PRIx64 ") > addr2 (%0" PRIx64 ")\n",
+		 addr1, addr2);
+	return;
+    }
+
+    buf_addr = -1;
+    int      status;
+    uint64_t rdata = 0;
+
+    // Read and show leading misaligned 1-byte, if any
+    if ((addr1 & 0x1) == 1) {
+	status = read_internal (Dbg_RW_MEM, addr1, Dbg_MEM_1B, & rdata);
+	if (status != STATUS_OK) {
+	    fprintf (stdout, "ERROR: unable to read mem byte at addr %0" PRIx64 "\n",
+		     addr1);
+	    return;
+	}
+	// fprintf (stdout, "    Read 1 byte  %0" PRIx64 " => %0" PRIx64 "\n", addr1, rdata);
+	append_bytes (addr1, 1, rdata);
+	addr1 += 1;
+    }
+    assert ((addr1 & 0x1) == 0);
+
+    // Read and show leading misaligned 2-bytes, if any
+    if ((addr1 & 0x3) == 2) {
+	status = read_internal (Dbg_RW_MEM, addr1, Dbg_MEM_2B, & rdata);
+	if (status != STATUS_OK) {
+	    fprintf (stdout, "ERROR: unable to read 2 mem bytes at addr %0" PRIx64 "\n",
+		     addr1);
+	    return;
+	}
+	// fprintf (stdout, "    Read 2 bytes %0" PRIx64 " => %0" PRIx64 "\n", addr1, rdata);
+	append_bytes (addr1, 2, rdata);
+	addr1 += 2;
+    }
+    assert ((addr1 & 0x3) == 0);
+
+    // Read and show aligned 4-bytes, if any
+    while ((addr2 - addr1) >= 4) {
+	status = read_internal (Dbg_RW_MEM, addr1, Dbg_MEM_4B, & rdata);
+	if (status != STATUS_OK) {
+	    fprintf (stdout, "ERROR: unable to read 4 mem bytes at addr %0" PRIx64 "\n",
+		     addr1);
+	    return;
+	}
+	// fprintf (stdout, "    Read 4 bytes %0" PRIx64 " => %0" PRIx64 "\n", addr1, rdata);
+	append_bytes (addr1, 4, rdata);
+	addr1 += 4;
+    }
+
+    // Read and show trailing misaligned 2-bytes, if any
+    if ((addr2 - addr1) >= 2) {
+	status = read_internal (Dbg_RW_MEM, addr1, Dbg_MEM_2B, & rdata);
+	if (status != STATUS_OK) {
+	    fprintf (stdout, "ERROR: unable to read 2 mem bytes at addr %0" PRIx64 "\n",
+		     addr1);
+	    return;
+	}
+	// fprintf (stdout, "    Read 2 bytes %0" PRIx64 " => %0" PRIx64 "\n", addr1, rdata);
+	append_bytes (addr1, 2, rdata);
+	addr1 += 2;
+    }
+
+    // Read and show trailing misaligned 1-byte, if any
+    if ((addr2 - addr1) == 1) {
+	status = read_internal (Dbg_RW_MEM, addr1, Dbg_MEM_1B, & rdata);
+	if (status != STATUS_OK) {
+	    fprintf (stdout, "ERROR: unable to read 1 mem byte at addr %0" PRIx64 "\n",
+		     addr1);
+	    return;
+	}
+	// fprintf (stdout, "    Read 1 byte  %0" PRIx64 " => %0" PRIx64 "\n", addr1, rdata);
+	append_bytes (addr1, 1, rdata);
+	addr1 += 1;
+    }
+
+    if ((addr2 & 0xF) != 0)
+	flush_buf ();
 }
 
 // ================================================================
@@ -1045,7 +1316,7 @@ void exec_quit ()
 
 void interactive_command_loop ()
 {
-    int   cmd, index;
+    int   index;    // Cursor on cmdline for parsing
     char *cmdline;
     int   serialnum = 1;
 
@@ -1074,13 +1345,20 @@ void interactive_command_loop ()
 	add_history (cmdline);
 	serialnum++;
 
-	cmd = parse_command (cmdline, & index);
-	// fprintf (stdout, "cmd %0d\n", cmd);
+	for (int j = 0; cmdline [j] != 0; j++)
+	    cmdline [j] = tolower (cmdline [j]);
 
-	switch (cmd) {
-	case CMD_QUIT: exec_quit (); return;
+	Cmd *p_cmd = parse_command (cmdline, & index);
+	if (p_cmd == NULL) {
+	    fprintf (stdout, "Unable to parse a command; type 'help' for list of commands\n");
+	    continue;
+	}
 
-	case CMD_HELP:    exec_help ();                  break;
+	switch (p_cmd->cmd_code) {
+	case CMD_QUIT:           exec_quit ();           return;
+	case CMD_HELP:           exec_help ();           break;
+	case CMD_HELP_GPR_NAMES: exec_help_GPR_Names (); break;
+	case CMD_HELP_CSR_NAMES: exec_help_CSR_Names (); break;
 	case CMD_HISTORY: exec_history ();               break;
 
 	case CMD_LOADELF:  exec_loadelf (cmdline + index);             break;
@@ -1091,13 +1369,15 @@ void interactive_command_loop ()
 	case CMD_CONTINUE: exec_continue ();                           break;
 	case CMD_HALT:     exec_halt ();                               break;
 
-	case CMD_RGPR: exec_read  (cmdline + index, Dbg_RW_GPR, Dbg_MEM_4B); break;
-	case CMD_RCSR: exec_read  (cmdline + index, Dbg_RW_CSR, Dbg_MEM_4B); break;
-	case CMD_RMEM: exec_read  (cmdline + index, Dbg_RW_MEM, Dbg_MEM_4B); break;
+	case CMD_RGPR: exec_read  (cmdline, index, Dbg_RW_GPR, Dbg_MEM_4B); break;
+	case CMD_RCSR: exec_read  (cmdline, index, Dbg_RW_CSR, Dbg_MEM_4B); break;
+	case CMD_RMEM: exec_read  (cmdline, index, Dbg_RW_MEM, Dbg_MEM_4B); break;
 
-	case CMD_WGPR: exec_write (cmdline + index, Dbg_RW_GPR, Dbg_MEM_4B); break;
-	case CMD_WCSR: exec_write (cmdline + index, Dbg_RW_CSR, Dbg_MEM_4B); break;
-	case CMD_WMEM: exec_write (cmdline + index, Dbg_RW_MEM, Dbg_MEM_4B); break;
+	case CMD_WGPR: exec_write (cmdline, index, Dbg_RW_GPR, Dbg_MEM_4B); break;
+	case CMD_WCSR: exec_write (cmdline, index, Dbg_RW_CSR, Dbg_MEM_4B); break;
+	case CMD_WMEM: exec_write (cmdline, index, Dbg_RW_MEM, Dbg_MEM_4B); break;
+
+	case CMD_DUMPMEM: exec_dumpmem (cmdline, index); break;
 
 	case CMD_ERR:
         default:      fprintf (stdout, "Unrecognized command (type 'help' for help)\n");
@@ -1178,13 +1458,8 @@ int main (int argc, char *argv [])
 // ****************************************************************
 // TODO (FUTURE IMPROVEMENTS)
 
-// When loading ELF, automatically set PC to entry point?
-// In R/W Mem, accept range of addrs
-// In R/W CSR, accept CSR names for CSR addr:
-//     dcsr, dpc, mstatus, mtvec, mepc, mcause, mscratch, mip, mie
 // Add 'loadmemhex32' command, like 'loadELF'
 // In read_buf/write_buf, do 64-bit reads if remote server supports it.
 // In read_buf/write_buf, pipeline write requests and responses, instead of one-at-a-time.
-// In R/W GPR, accept assembly names, 'xN' names, for GPR num
 
 // ****************************************************************

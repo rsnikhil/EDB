@@ -31,11 +31,13 @@ LDLIBS += -lreadline
 # EDB
 
 SRCS_C_EDB += src_C/Dbg_Pkts.c
+SRCS_C_EDB += src_C/ISA_Defs.c
 SRCS_C_EDB += src_C/TCP_Client_Lib.c
 SRCS_C_EDB += src_C/loadELF.c
 
 SRCS_H_EDB  = src_C/Status.h
 SRCS_H_EDB  = src_C/Dbg_Pkts.h
+SRCS_H_EDB  = src_C/ISA_Defs.h
 SRCS_H_EDB += src_C/TCP_Client_Lib.h
 SRCS_H_EDB += src_C/loadELF.h
 

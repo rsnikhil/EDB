@@ -180,6 +180,7 @@ void handle_RW (Dbg_to_CPU_Pkt *p_pkt_in)
     pkt_out.payload  = 0xDABACAFE;    // bogus value
 
     // Do the R/W
+    // GPRs
     if (p_pkt_in->rw_target == Dbg_RW_GPR) {
 	if (p_pkt_in->rw_addr >= 32) {
 	    pkt_out.pkt_type = Dbg_from_CPU_ERR;
@@ -204,6 +205,7 @@ void handle_RW (Dbg_to_CPU_Pkt *p_pkt_in)
 		     p_pkt_in->rw_addr, p_pkt_in->rw_wdata);
 	}
     }
+    // CSRs
     else if (p_pkt_in->rw_target == Dbg_RW_CSR) { 
 	if (p_pkt_in->rw_addr >= 0x1000) {
 	    pkt_out.pkt_type = Dbg_from_CPU_ERR;
@@ -224,9 +226,11 @@ void handle_RW (Dbg_to_CPU_Pkt *p_pkt_in)
 		     p_pkt_in->rw_addr, p_pkt_in->rw_wdata);
 	}
     }
+    // FPRs
     else if (p_pkt_in->rw_target == Dbg_RW_FPR) { 
 	// default err response
     }
+    // Mem
     else {
 	assert (p_pkt_in->rw_target == Dbg_RW_MEM);
 

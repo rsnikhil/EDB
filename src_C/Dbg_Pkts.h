@@ -63,6 +63,7 @@ void print_from_CPU_pkt (FILE                   *fd,
 
 // ****************************************************************
 // DCSR details (these are standard RISC-V definitions)
+// TODO: Move these into ISA_Defs.h
 
 #define addr_csr_dcsr 0x7b0
 #define addr_csr_dpc  0x7b1
