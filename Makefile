@@ -4,13 +4,15 @@
 .PHONY: help
 help:
 	@echo "Targets:"
-	@echo "  all/edb         Builds the EDB client program"
+	@echo "  edb                    Builds the EDB client program"
+	@echo "  exe_Elf_to_Memhex32    Builds the Elf-to-Memhex32 program"
 	@echo ""
-	@echo "  clean           Remove temporary files"
-	@echo "  full_clean      Restore directory to pristine state"
+	@echo "  all                    make all the above targets"
+	@echo "  clean                  Remove temporary files"
+	@echo "  full_clean             Restore directory to pristine state"
 
 .PHONY: all
-all: edb
+all: edb  exe_Elf_to_Memhex32
 
 # ================================================================
 # C compiler flags
@@ -45,6 +47,18 @@ edb:  src_C/edb.c  $(SRCS_H_EDB)  $(SRCS_C_EDB)
 	$(CC) $(CFLAGS) -o edb  -I src_C/  src_C/edb.c  $(SRCS_C_EDB)  $(LDLIBS)
 
 # ================================================================
+# exe_Elf_to_Memhex32
+
+SRCS_C_E2MH += src_C/loadELF.c
+
+SRCS_H_E2MH  = src_C/Status.h
+SRCS_H_E2MH += src_C/loadELF.h
+
+exe_Elf_to_Memhex32: src_C/Elf_to_Memhex32.c $(SRCS_H_E2MH) $(SRCS_C_E2MH)
+	$(CC) $(CFLAGS) -o exe_ELF_to_Memhex32 -I src_C  src_C/Elf_to_Memhex32.c \
+	  $(SRCS_C_E2MH)  $(LDLIBS)
+
+# ================================================================
 
 .PHONY: clean
 clean:
@@ -54,6 +68,6 @@ clean:
 .PHONY: full_clean
 full_clean: clean
 	make -C test full_clean
-	rm -r -f  edb*
+	rm -r -f  edb*  exe_ELF_to_Memhex32*  *.memhex32
 
 # ================================================================
