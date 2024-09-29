@@ -546,7 +546,9 @@ void exec_loadelf (const char *cmdline)
 	return;
     }
 
-    status = load_ELF (filename);
+    const int  verbosity         = 0;
+    const bool do_readback_check = true;
+    status = loadELF (verbosity, do_readback_check, filename);
     if (status == STATUS_OK)
 	fprintf (stdout, "  OK\n");
     else

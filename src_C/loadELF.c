@@ -54,8 +54,6 @@ static const char start_symbol  [] = "_start";
 static const char exit_symbol   [] = "exit";
 static const char tohost_symbol [] = "tohost";
 
-static int verbosity = 0;
-
 // ================================================================
 
 // From /usr/include/gelf.h
@@ -75,48 +73,74 @@ static int verbosity = 0;
 //    } Elf64_Phdr;
 
 static
+void print_GElf_Phdr_column_names ()
+{
+    fprintf (stdout, "      ");
+    fprintf (stdout, "%16s", "vaddr");
+    fprintf (stdout, " %16s", "vaddrlim");
+    fprintf (stdout, "    ");
+    fprintf (stdout, " %9s", "type");
+    fprintf (stdout, " %5s", "flags");
+    fprintf (stdout, " %16s", "offset");
+    fprintf (stdout, " %8s", "paddr");
+    fprintf (stdout, " %8s", "filesz");
+    fprintf (stdout, " %8s", "memsz");
+    fprintf (stdout, " %8s", "align\n");
+}
+
+static
+void print_GElf_Phdr (const int index, const GElf_Phdr *p_phdr)
+{
+    fprintf (stdout, "      ");
+    fprintf (stdout, "%016lx",  p_phdr->p_vaddr);
+    fprintf (stdout, " %016lx",  p_phdr->p_vaddr + p_phdr->p_memsz);
+
+    fprintf (stdout, " [%02d]", index);
+    fprintf (stdout, " %8x",    p_phdr->p_type);
+    fprintf (stdout, " %5x",    p_phdr->p_flags);
+    fprintf (stdout, " %16lx",  p_phdr->p_offset);
+    fprintf (stdout, " %8lx",   p_phdr->p_paddr);
+    fprintf (stdout, " %8lx",   p_phdr->p_filesz);
+    fprintf (stdout, " %8lx",   p_phdr->p_memsz);
+    fprintf (stdout, " %8lx\n", p_phdr->p_align);
+}
+
+static
 uint64_t fn_vaddr_to_paddr (Elf *e, uint64_t vaddr, uint64_t size)
 {
     GElf_Phdr phdr;    // = Elf64_Phdr
     int index = 0;
+    const bool verbose = false;
 
-    /*
-    fprintf (stdout, "%16s", "Virtual address");
-    fprintf (stdout, " %16s", "Virt addr lim");
-    fprintf (stdout, "    ");
-    fprintf (stdout, " %9s", "Type");
-    fprintf (stdout, " %5s", "Flags");
-    fprintf (stdout, " %16s", "File offset");
-    fprintf (stdout, " %8s", "Phy addr");
-    fprintf (stdout, " %8s", "Sz file");
-    fprintf (stdout, " %8s", "Sz mem");
-    fprintf (stdout, " %8s", "Alignment\n");
-    */
+    if (verbose) {
+	fprintf (stdout, "    fn_vaddr_to_paddr (vaddr %0" PRIx64 ", size %0" PRIx64 ")\n",
+		 vaddr, size);
+	fprintf (stdout, "      Searching phdrs\n");
+	print_GElf_Phdr_column_names ();
+    }
 
+    uint64_t paddr = 0;
     while (gelf_getphdr (e, index, & phdr) != NULL) {
-	/*
-	fprintf (stdout, "%016lx",  phdr.p_vaddr);
-	fprintf (stdout, " %016lx",  phdr.p_vaddr + phdr.p_memsz);
+	if (verbose)
+	    print_GElf_Phdr (index, & phdr);
 
-	fprintf (stdout, " [%02d]", index);
-	fprintf (stdout, " %8x",    phdr.p_type);
-	fprintf (stdout, " %5x",    phdr.p_flags);
-	fprintf (stdout, " %16lx",  phdr.p_offset);
-	fprintf (stdout, " %8lx",   phdr.p_paddr);
-	fprintf (stdout, " %8lx",   phdr.p_filesz);
-	fprintf (stdout, " %8lx",   phdr.p_memsz);
-	fprintf (stdout, " %8lx\n", phdr.p_align);
-	*/
+	if ((phdr.p_vaddr <= vaddr)
+	    && ((vaddr + size) <= (phdr.p_vaddr + phdr.p_memsz))) {
 
-	if ((phdr.p_vaddr <= vaddr) && (size <= phdr.p_memsz)) {
-	    return (vaddr - phdr.p_vaddr) + phdr.p_paddr;
+	    uint64_t paddr2 = (vaddr - phdr.p_vaddr) + phdr.p_paddr;
+
+	    if ((paddr != 0) && (paddr != paddr2)) {
+		fprintf (stdout, "WARNING: %s: more than one GElf_Phdr match:\n",
+			 __FUNCTION__);
+		fprintf (stdout, "    vaddr   %08" PRIx64 "\n", vaddr);
+		fprintf (stdout, "    paddr 1 %08" PRIx64 "\n", paddr);
+		fprintf (stdout, "    paddr 2 %08" PRIx64 " (using this one)\n", paddr2);
+	    }
+	    paddr = paddr2;
 	}
 	index++;
     }
-    // Did not find segment for this.
-    fprintf (stdout, "ERROR: %s: Could not find segment containing given virtual range\n", __FUNCTION__);
-    fprintf (stdout, "    vaddr %0" PRIx64 "  size %0" PRIx64 "\n", vaddr, size);
-    exit (1);
+    return paddr;
 }
 
 // ================================================================
@@ -124,7 +148,9 @@ uint64_t fn_vaddr_to_paddr (Elf *e, uint64_t vaddr, uint64_t size)
 // Note: currently reading back at most first 8 bytes at addr
 
 static
-int ELF_readback_check (const uint8_t  *buf,
+int ELF_readback_check (const int       verbosity,
+			const char     *sec_name,
+			const uint8_t  *buf,
 			const uint64_t  size,
 			const uint64_t  addr)
 {
@@ -136,8 +162,8 @@ int ELF_readback_check (const uint8_t  *buf,
     int size1       = ((size > 8) ? 8 : size);
 
     if (verbosity != 0)
-	fprintf (stdout, "      Readback-check: %0d bytes at addr %0" PRIx64 "",
-		 size1, addr);
+	fprintf (stdout, "    %s: check %0d bytes at addr %0" PRIx64 "",
+		 sec_name, size1, addr);
 
     // Initialize readback_bytes to something different from buf data
     uint8_t readback_bytes [8];
@@ -179,10 +205,15 @@ int ELF_readback_check (const uint8_t  *buf,
 // Scan the ELF file
 
 static
-uint8_t zerobuf [4096] = { 0 };    // 4096 == 0x1000
+char indent [] = "        ";    // for printfs
+
+// This is only relevant if we include code below that zeroes out .bss
+// static
+// uint8_t zerobuf [4096] = { 0 };    // 4096 == 0x1000
 
 static
-int scan_elf (Elf  *e,
+int scan_elf (const int         verbosity,
+	      Elf              *e,
 	      const GElf_Ehdr  *ehdr,
 	      const int         pass,
 
@@ -204,7 +235,7 @@ int scan_elf (Elf  *e,
 
 	char *sec_name = elf_strptr (e, shstrndx, shdr.sh_name);
 	if ((pass == 1) && (verbosity != 0))
-	    fprintf (stdout, "  %-20s:", sec_name);
+	    fprintf (stdout, "  %s:\n", sec_name);
 
 	Elf_Data *data = 0;
 	// 'ALLOC' type sections are candidates to be loaded
@@ -216,19 +247,19 @@ int scan_elf (Elf  *e,
 	    if ((pass == 1) && (verbosity != 0)) {
 #if !defined(__APPLE__)
 		// Linux
-		fprintf (stdout, " vaddr %10" PRIx64 " to vaddr %10" PRIx64 ";",
+		fprintf (stdout, "%svaddr %10" PRIx64 " to vaddr %10" PRIx64 ";",
+			 indent,
 			 shdr.sh_addr,
 			 shdr.sh_addr + data->d_size);
 #else
 		// MacOS
-		fprintf (stdout, " vaddr %10lx to vaddr %10lx;",
+		fprintf (stdout, "%svaddr %10lx to vaddr %10lx;",
+			 indent,
 			 shdr.sh_addr,
 			 shdr.sh_addr + data->d_size);
 #endif
-		fprintf (stdout, " size 0x%lx (=%0ld)\n",
-			 data->d_size,
-			 data->d_size);
-		fprintf (stdout, "                        paddr %10" PRIx64 "\n",
+		fprintf (stdout, " size 0x%lx (=%0ld)\n", data->d_size, data->d_size);
+		fprintf (stdout, "        paddr %10" PRIx64 "\n",
 			 section_paddr);
 	    }
 
@@ -242,41 +273,26 @@ int scan_elf (Elf  *e,
 	    }
 
 	    if (data->d_size == 0) {
-		if ((pass == 1) && (verbosity != 0))
-		    fprintf (stdout, "    Empty section (0-byte size), ignoring\n");
+		if ((pass == 1) && (verbosity != 0)) {
+		    fprintf (stdout, "%s", indent);
+		    fprintf (stdout, "Ignoring size 0 section\n");
+		}
 	    }
 	    else {
-		// Our AWSteria ELF files should not contain addrs below 0x8000_0000
-		// For now, just ignore those addrs (TODO: BETTER FIX?)
-		uint64_t offset = 0;
 		uint64_t addr   = section_paddr;
 		uint64_t size   = data->d_size;
 		uint8_t *buf    = data->d_buf;
 
-		if (section_paddr < 0x80000000) {
-		    offset = 0x80000000 - section_paddr;
-		    addr  += offset;
-		    size   = ((size >= offset) ? (size - offset) : 0);
-		    buf   += offset;
-		    if ((pass == 1) && (verbosity != 0))
-			fprintf (stdout,
-				 "    Clipping paddr %0" PRIx64 " up to %0" PRIx64 "\n",
-				 section_paddr, addr);
-		}
-
-		if (size == 0) {
-		    if ((pass == 1) && (verbosity != 0))
-			fprintf (stdout,
-				 "    Ignoring section (no data after clipping)\n");
-		}
-		else if (pass == 1) {
+		if (pass == 1) {
 		    // Pass 1: load the section bits into memory
 
 		    if (shdr.sh_type != SHT_NOBITS) {
-			if (verbosity != 0)
+			if (verbosity != 0) {
+			    fprintf (stdout, "%s", indent);
 			    fprintf (stdout,
-				     "    Loading addr %0" PRIx64 ", size %0" PRIx64 "\n",
+				     "Loading addr %0" PRIx64 ", size %0" PRIx64 "\n",
 				     addr, size);
+			}
 			status = exec_write_buf (addr, size, buf);
 			if (status != STATUS_OK) {
 			    fprintf (stdout,
@@ -287,21 +303,26 @@ int scan_elf (Elf  *e,
 		    }
 		    else if ((strcmp (sec_name, ".bss") == 0)
 			     || (strcmp (sec_name, ".sbss") == 0)) {
-			if (verbosity != 0)
-			    fprintf (stdout,
-				     "    Loading .bss/.sbss: addr %0" PRIx64 ", size %0" PRIx64 "\n",
-				     addr, size);
+			if (verbosity != 0) {
+			    fprintf (stdout, "%s", indent);
+			    fprintf (stdout, ".bss/.sbss: addr %0" PRIx64, addr);
+			    fprintf (stdout, " size %0" PRIx64 "\n", size);
+			    fprintf (stdout, "%s... not loadable\n", indent);
+			}
 
+			/* This code zeroes out .bss memory, 4K page at a time.
 			uint64_t addr1  = addr;
 			uint64_t size1  = 0;
 			while ((addr1 + size1) <= (addr + size)) {
 			    size1 = (addr + size) - addr1;
 			    if (size1 > 4096)
 				size1 = 4096;
-			    if (verbosity != 0)
-				fprintf (stdout,
-					 "    Loading addr1 %0" PRIx64 ", size1 %0" PRIx64 "\n",
-					 addr1, size1);
+			    if (verbosity != 0) {
+				fprintf (stdout, "%sLoading", indent);
+				fprintf (stdout, " addr1 %0" PRIx64, addr1);
+				fprintf (stdout, ", size1 %0" PRIx64, size1);
+				fprintf (stdout, " with zeroes\n");
+			    }
 			    status = exec_write_buf (addr1, size1, zerobuf);
 			    if (status != STATUS_OK) {
 				fprintf (stdout,
@@ -311,10 +332,13 @@ int scan_elf (Elf  *e,
 			    }
 			    addr1 += 4096;
 			}
+			*/
 		    }
 		    else {
-			if (verbosity != 0)
-			    fprintf (stdout, "    No bits to load\n");
+			if (verbosity != 0) {
+			    fprintf (stdout, "%sIgnoring ELF section", indent);
+			    fprintf (stdout, " (shdr.sh_type == SHT_NOBITS)\n");
+			}
 		    }
 		}
 		else {
@@ -322,30 +346,37 @@ int scan_elf (Elf  *e,
 		    // TODO: should we sample some more points?
 
 		    if (shdr.sh_type != SHT_NOBITS) {
-			status = ELF_readback_check (buf, size, addr);
+			status = ELF_readback_check (verbosity, sec_name, buf, size, addr);
 			if (status != STATUS_OK)
 			    return STATUS_ERR;
 		    }
 		    else if ((strcmp (sec_name, ".bss") == 0)
 			     || (strcmp (sec_name, ".sbss") == 0)) {
+			status = STATUS_OK;
+
+			/* This code checks if bss is zero; is relevant only
+			   if we zero'd bss during loading.
 			uint64_t size1 = ((size > 4096) ? 4096 : size);
-			status = ELF_readback_check (zerobuf, size1, addr);
+			status = ELF_readback_check (verbosity,
+						     sec_name, zerobuf, size1, addr);
 			if (status != STATUS_OK)
 			    return STATUS_ERR;
+			*/
 		    }
 		    else {
-			if (verbosity != 0)
+			if (verbosity != 0) {
 			    fprintf (stdout, "    No bits to load\n");
+			}
 		    }
 		}
 	    }
 	}
 
-	// In pass2, if we find the symbol table, search for symbols of interest
+	// In pass 1, if we find the symbol table, search for symbols of interest
 	else if ((shdr.sh_type == SHT_SYMTAB)
 		 && (pass == 1)
 		 && (verbosity != 0)) {
-	    fprintf (stdout, "\n    Searching for symbols  '%s'  '%s'  '%s'\n",
+	    fprintf (stdout, "    Searching for symbols  '%s'  '%s'  '%s'\n",
 		     start_symbol, exit_symbol, tohost_symbol);
 
  	    // Get the section data
@@ -400,8 +431,11 @@ int scan_elf (Elf  *e,
 	}
 
 	else {
-	    if ((pass == 1) && (verbosity != 0))
-		fprintf (stdout, " ELF section ignored\n");
+	    if ((pass == 1) && (verbosity != 0)) {
+		fprintf (stdout, "%sIgnoring ELF section:",
+			 indent);
+		fprintf (stdout, " shdr.sh_flags [SHF_ALLOC] is false\n");
+	    }
 	}
     }
     return STATUS_OK;
@@ -412,7 +446,9 @@ int scan_elf (Elf  *e,
 // Returns STATUS_OK on success,
 // else STATUS_ERR (multiple possible reasons).
 
-int load_ELF (const char *elf_filename)
+int loadELF (const int   verbosity,
+	     const bool  do_readback_check,
+	     const char *elf_filename)
 {
     Elf_Features  elf_features;
     Elf          *e;
@@ -516,7 +552,7 @@ int load_ELF (const char *elf_filename)
     // Ok, all checks done, ready to read the ELF and load it.
 
     fprintf (stdout, "Loading ELF file into RISC-V memory:\n");
-    fprintf (stdout, "  %s\n", elf_filename);
+    fprintf (stdout, "    %s\n", elf_filename);
 
     elf_features.bitwidth        = 0;
     elf_features.min_paddr       = 0xFFFFFFFFFFFFFFFFllu;
@@ -534,7 +570,7 @@ int load_ELF (const char *elf_filename)
 
     clock_gettime (CLOCK_REALTIME, & ts1);
     pass   = 1;
-    status = scan_elf (e, & ehdr, pass, & elf_features);
+    status = scan_elf (verbosity, e, & ehdr, pass, & elf_features);
     clock_gettime (CLOCK_REALTIME, & ts2);
     if (status != STATUS_OK) {
 	fprintf (stdout, "ERROR: %s: scan_elf failed: status %0d\n",
@@ -575,15 +611,17 @@ int load_ELF (const char *elf_filename)
     // ----------------------------------------------------------------
     // Pass 2: readback check
 
-    fprintf (stdout, "  Readback check\n");
-    pass = 2;
-    status = scan_elf (e, & ehdr, pass, & elf_features);
-    if (status != STATUS_OK) {
-	fprintf (stdout, "ERROR: %s: scan_elf failed: status %0d\n",
-		 __FUNCTION__, status);
-	goto done;
+    if (do_readback_check) {
+	fprintf (stdout, "  Readback check\n");
+	pass = 2;
+	status = scan_elf (verbosity, e, & ehdr, pass, & elf_features);
+	if (status != STATUS_OK) {
+	    fprintf (stdout, "ERROR: %s: scan_elf failed: status %0d\n",
+		     __FUNCTION__, status);
+	}
+	else
+	    fprintf (stdout, "  Readback check complete\n");
     }
-    fprintf (stdout, "  Readback check complete\n");
 
     // Close elf object
     elf_end (e);

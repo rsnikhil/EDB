@@ -9,6 +9,8 @@
 // Extern decls for Elf_read.c
 
 extern
-int load_ELF (const char *elf_filename);
+int loadELF (const int   verbosity,
+	     const bool  do_readback_check,
+	     const char *elf_filename);
 
 // ****************************************************************
