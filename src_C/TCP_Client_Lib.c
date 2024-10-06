@@ -127,6 +127,7 @@ uint32_t  tcp_client_send (const uint32_t data_size, const uint8_t *data)
 
     if (n < 0) {
 	fprintf (stdout, "ERROR: %s() = %0d\n", __FUNCTION__, n);
+	perror ("    ");
 	return STATUS_ERR;
     }
     return STATUS_OK;

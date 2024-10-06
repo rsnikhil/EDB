@@ -36,6 +36,7 @@ void print_to_CPU_pkt (FILE *fd,
 	case Dbg_RW_WRITE: fprintf (fd, " WRITE"); break;
 	default: fprintf (fd, "  <UNKNOWN Dbg_RW_Op %0d?>", p_pkt->rw_op); break;
 	}
+
 	switch (p_pkt->rw_size) {
 	case Dbg_MEM_1B: fprintf (fd, " 1B ");  break;
 	case Dbg_MEM_2B: fprintf (fd, " 2B"); break;
@@ -43,6 +44,7 @@ void print_to_CPU_pkt (FILE *fd,
 	case Dbg_MEM_8B: fprintf (fd, " 8B"); break;
 	default: fprintf (fd, " <UNKNOWN Dbg_RW_Size %0d?>", p_pkt->rw_size); break;
 	}
+
 	switch (p_pkt->rw_target) {
 	case Dbg_RW_GPR:  fprintf (fd, "  GPR x%0" PRId64,  p_pkt->rw_addr);  break;
 	case Dbg_RW_FPR:  fprintf (fd, "  FPR f%0" PRId64,  p_pkt->rw_addr); break;
@@ -50,6 +52,7 @@ void print_to_CPU_pkt (FILE *fd,
 	case Dbg_RW_MEM:  fprintf (fd, "  Mem 0x%0" PRIx64, p_pkt->rw_addr); break;
 	default: fprintf (fd, " <UNKNOWN Dbg_RW_Target %0d?>", p_pkt->rw_target); break;
 	}
+
 	if (p_pkt->rw_op == Dbg_RW_WRITE) fprintf (fd, " 0x%0" PRIx64, p_pkt->rw_wdata);
 	fprintf (fd, "");
 	break;
@@ -73,7 +76,7 @@ void print_from_CPU_pkt (FILE *fd,
     switch (p_pkt->pkt_type) {
     case Dbg_from_CPU_RESUMEACK: fprintf (fd, " RESUMEACK"); break;
     case Dbg_from_CPU_RUNNING:   fprintf (fd, " RUNNING");   break;
-    case Dbg_from_CPU_RW_OK:     fprintf (fd, " RW_OK");     break;
+    case Dbg_from_CPU_RW_OK:     fprintf (fd, " RW_OK %0" PRIx64, p_pkt->payload); break;
     case Dbg_from_CPU_HALTED:
 	fprintf (fd, " HALTED; cause ");
 	switch (p_pkt->payload) {
@@ -83,7 +86,7 @@ void print_from_CPU_pkt (FILE *fd,
 	default:                 fprintf (fd, "%" PRId64, p_pkt->payload);
 	}
 	break;
-    case Dbg_from_CPU_ERR: fprintf (fd, " ERR %0" PRId64 "", p_pkt->payload); break;
+    case Dbg_from_CPU_ERR: fprintf (fd, " ERR %0" PRId64, p_pkt->payload); break;
     default: fprintf (fd, " <unknown Dbg_from_CPU_Pkt_Type %0d?>", p_pkt->pkt_type);
     }
     fprintf (fd, "%s", post);

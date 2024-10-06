@@ -15,9 +15,28 @@ help:
 all: edb  exe_Elf_to_Memhex32
 
 # ================================================================
+# Sources
+
+VENDOR_GDBSTUB = vendor/bluespec_RISCV_gdbstub
+
+SRCS_C_EDB += src_C/Dbg_Pkts.c
+SRCS_C_EDB += src_C/ISA_Defs.c
+SRCS_C_EDB += src_C/TCP_Client_Lib.c
+SRCS_C_EDB += src_C/loadELF.c
+SRCS_C_EDB += src_C/gdbstub_be_RSPS.c
+
+SRCS_H_EDB  = src_C/Status.h
+SRCS_H_EDB  = src_C/Dbg_Pkts.h
+SRCS_H_EDB  = src_C/ISA_Defs.h
+SRCS_H_EDB += src_C/TCP_Client_Lib.h
+SRCS_H_EDB += src_C/loadELF.h
+SRCS_H_EDB += $(VENDOR_GDBSTUB)/gdbstub_be.h
+
+# ================================================================
 # C compiler flags
 
 CFLAGS += -std=gnu11 -g -Wall -Werror
+CFLAGS += -I $(VENDOR_GDBSTUB)
 
 # For include <gelf.h> on MacOS, after 'brew install libelf'
 CFLAGS += -I /opt/homebrew/include
@@ -30,18 +49,6 @@ LDLIBS  = -lelf
 LDLIBS += -lreadline
 
 # ================================================================
-# EDB
-
-SRCS_C_EDB += src_C/Dbg_Pkts.c
-SRCS_C_EDB += src_C/ISA_Defs.c
-SRCS_C_EDB += src_C/TCP_Client_Lib.c
-SRCS_C_EDB += src_C/loadELF.c
-
-SRCS_H_EDB  = src_C/Status.h
-SRCS_H_EDB  = src_C/Dbg_Pkts.h
-SRCS_H_EDB  = src_C/ISA_Defs.h
-SRCS_H_EDB += src_C/TCP_Client_Lib.h
-SRCS_H_EDB += src_C/loadELF.h
 
 edb:  src_C/edb.c  $(SRCS_H_EDB)  $(SRCS_C_EDB)
 	$(CC) $(CFLAGS) -o edb  -I src_C/  src_C/edb.c  $(SRCS_C_EDB)  $(LDLIBS)

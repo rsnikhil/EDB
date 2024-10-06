@@ -4,28 +4,26 @@
 // EDB: "Economical/Elementary Debugger"
 // EDB is a simple debugger which can be used like GDB to control a remote RISC-V CPU.
 
-// It uses TCP to connect to a remote 'edbstub' server (analogue of
-//     'gdbstub' server) which controls the DUT (a RISC-V CPU).
+// EDB uses TCP to connect to a remote server controlling a RISC-V CPU
+//     (simulation or hardware).  It uses RSPS (RSP/Structural) for
+//     communication with the server.
 
-// EDB is far simpler (and far less capable) than GDB, and the remote
-// edbstub is far simpler (and far less capable) than gdbstub.  It is
-// meant for quick bringup (easier than gdb/gdbstub) and for teaching
-// the principles of how remote debugging works.
+// EDB is far simpler (and far less capable) than GDB/LLDB.
+// * An RSPS server for a CPU is MUCH simpler to implement than a RISC-V Debug Module
+// * EDB is small, standalone, easily-portable C program, whereas
+//     GDB/LLDB require more serious installation effort.
 
-// It has a small repertoire of commands:
-//     Type 'help' at the interactive prompt for list
-//     or see 'exec_help()' below.
-// It is machine-code-level only (no source-level debugging).
-// It has no scripting.
+// * All the code is small, simple, and open-source, and therefore
+//     more suitable for teaching principles of how remote debugging
+//     is implemented.
 
-// ----------------
-// Acknowledgements
-//
-// Portions of TCP code adapted from example ECHOSERV
-//   ECHOSERV
-//   (c) Paul Griffiths, 1999
-//   http://www.paulgriffiths.net/program/c/echoserv.php
-//
+// EDB has a small repertoire of commands:
+//     Type 'help' at the interactive prompt for a list.
+
+// You will still need GDB/LLDB for:
+// * Source-code (C, C++, ...) debugging. EDB only has a RISC-V ISA-level view.
+// * Scripting (gdb scripting, Python scripting, ...)
+
 // ****************************************************************
 // Includes from C library
 
@@ -60,16 +58,26 @@
 // Includes for this project
 
 #include "Status.h"
-#include "TCP_Client_Lib.h"
 #include "Dbg_Pkts.h"
 #include "ISA_Defs.h"
-#include "loadELF.h"
+#include "gdbstub_be.h"
 
 // ****************************************************************
-// Default hostname and TCP port for remote edbstub server
+// Verbosity for this module
 
-static char     server_hostname [] = "127.0.0.1";    // (localhost)
-static uint16_t server_listen_port = 30000;
+static
+int verbosity = 0;
+
+// ****************************************************************
+// Poll the CPU connection for a HALTED message, if any
+// TODO: should this be added to gdbstub_be.h or gdbstub_be_RSPS.h?
+extern
+uint32_t  gdbstub_be_poll_for_halted (const uint8_t xlen);
+
+// Pretty-pring dcsr cause field
+// TODO: should this be added to gdbstub_be_RSPS.h?
+extern
+void fprintf_dcsr_cause (FILE *fd, const char *pre, const uint32_t dcsr, const char *post);
 
 // ****************************************************************
 // Parse EDB interactive command, arguments
@@ -208,7 +216,15 @@ int parse_GPR_num (const char *cmdline, const int index, uint64_t *p_gpr_num, in
 
     // Scan an ordinary integer in decimal or hex format, and index of char beyond it
     n = sscanf (cmdline + index, "%" PRIi64 "%n", p_gpr_num, & delta);
-    if (n != 1) return STATUS_ERR;
+    if (n != 1) {
+	fprintf (stdout, "ERROR: unknown GPR specified.\n");
+	fprintf (stdout, "  An acceptable GPR spec is:\n");
+	fprintf (stdout, "    0   ... 31\n");
+	fprintf (stdout, "    0x0 ... 0x1F\n");
+	fprintf (stdout, "    x0  ... x31\n");
+	fprintf (stdout, "    symbolic-GPR-name   (type 'GPR_Names' for list of GPR names\n");
+	return STATUS_ERR;
+    }
     *p_index = index + delta;
 
  done:
@@ -245,188 +261,6 @@ int parse_CSR_addr (const char *cmdline, const int index, uint64_t *p_csr_addr, 
 }
 
 // ****************************************************************
-// EDB communication with edbstub
-
-// File for logging communications
-FILE *flog = NULL;
-
-// ================================================================
-// Packet send/recv
-
-typedef enum { DONT_POLL, DO_POLL } Poll;
-
-static
-int send_to_edbstub (const char *context, Dbg_to_CPU_Pkt *p_pkt_out)
-{
-    if (flog != NULL)
-	print_to_CPU_pkt (flog, "Sending ", p_pkt_out, "\n");
-
-    int status = tcp_client_send (sizeof (Dbg_to_CPU_Pkt),
-				  (uint8_t *) p_pkt_out);
-    if (status == STATUS_ERR) {
-	fprintf (stdout, "ERROR: in %s.%s.tcp_client_send()\n", context, __FUNCTION__);
-	return STATUS_ERR;
-    }
-    return STATUS_OK;
-}
-
-static
-int recv_from_edbstub (const char *context, const Poll poll, Dbg_from_CPU_Pkt *p_pkt_in)
-{
-    bool do_poll = (poll == DO_POLL);
-    int  status  = tcp_client_recv (do_poll,
-				    sizeof (Dbg_from_CPU_Pkt),
-				    (uint8_t *) p_pkt_in);
-    if (status == STATUS_ERR)
-	fprintf (stdout, "ERROR: %s.%s.tcp_client_recv()\n", context, __FUNCTION__);
-
-    else if (status == STATUS_OK) {
-	if (flog != NULL)
-	    print_from_CPU_pkt (flog, "Received", p_pkt_in, "\n");
-    }
-    else {
-	assert (status == STATUS_UNAVAIL);
-	// 'unavailable' is only legal if we are polling
-	assert (do_poll);
-    }
-    return status;
-}
-
-// ****************************************************************
-// Internal functions used by exec_XXX functions
-
-// ================================================================
-
-static
-void fprintf_dcsr (FILE *fd, const uint32_t dcsr)
-{
-    // Line 1
-    fprintf (fd, "  DCSR {");
-    fprintf (fd, "debugver:%0d",   ((dcsr >> 28) & 0xF));
-    fprintf (fd, " extcause:%0d",  ((dcsr >> 24) & 0x7));
-    fprintf (fd, " cetrig:%0d",    ((dcsr >> 19) & 0x1));
-    fprintf (fd, "\n");
-
-    // Line 2
-    fprintf (fd, "        ");
-    fprintf (fd, "ebreak(vs:%0d",  ((dcsr >> 17) & 0x1));
-    fprintf (fd, " vu:%0d",        ((dcsr >> 16) & 0x1));
-    fprintf (fd, " m:%0d",         ((dcsr >> 15) & 0x1));
-    fprintf (fd, " s:%0d",         ((dcsr >> 13) & 0x1));
-    fprintf (fd, " u:%0d)",        ((dcsr >> 12) & 0x1));
-    fprintf (fd, " stepie:%0d",    ((dcsr >> 11) & 0x1));
-    fprintf (fd, " stopcount:%0d", ((dcsr >> 10) & 0x1));
-    fprintf (fd, " stoptime:%0d",  ((dcsr >>  9) & 0x1));
-    fprintf (fd, "\n");
-
-    // Line 3
-    fprintf (fd, "        cause:");
-    uint32_t cause = DCSR_CAUSE (dcsr);
-    switch (cause) {
-    case dcsr_cause_EBREAK:       fprintf (stdout, "EBREAK");       break;
-    case dcsr_cause_TRIGGER:      fprintf (stdout, "TRIGGER");      break;
-    case dcsr_cause_HALTREQ:      fprintf (stdout, "HALTREQ");      break;
-    case dcsr_cause_STEP:         fprintf (stdout, "STEP");         break;
-    case dcsr_cause_RESETHALTREQ: fprintf (stdout, "RESETHALTREQ"); break;
-    case dcsr_cause_GROUP:        fprintf (stdout, "GROUP");        break;
-    case dcsr_cause_OTHER:        fprintf (stdout, "OTHER");        break;
-    default:                      fprintf (stdout, "cause:%0d", cause);
-    }
-
-    fprintf (fd, " v:%0d",         ((dcsr >>  5) & 0x1));
-    fprintf (fd, " mprven:%0d",    ((dcsr >>  4) & 0x1));
-    fprintf (fd, " nmip:%0d",      ((dcsr >>  3) & 0x1));
-    fprintf (fd, " step:%0d",      ((dcsr >>  2) & 0x1));
-    fprintf (fd, " prv:%0d",       ((dcsr >>  0) & 0x3));
-    fprintf (fd, "}\n");
-}
-
-// ================================================================
-
-static
-int read_internal (const Dbg_RW_Target target,
-		   const uint64_t      addr,
-		   const Dbg_RW_Size   rw_size,
-		   uint64_t           *p_rdata)
-{
-    int status;
-
-    // Send request
-    Dbg_to_CPU_Pkt  pkt_out;
-    memset (& pkt_out, 0, sizeof (Dbg_to_CPU_Pkt));
-    pkt_out.pkt_type  = Dbg_to_CPU_RW;
-    pkt_out.rw_op     = Dbg_RW_READ;
-    pkt_out.rw_size   = rw_size;
-    pkt_out.rw_target = target;
-    pkt_out.rw_addr   = addr;
-    pkt_out.rw_wdata  = 0xAAAAAAAA;    // bogus value
-
-    status = send_to_edbstub (__FUNCTION__, & pkt_out);
-    if (status != STATUS_OK) return status;
-	    
-    // Receive response
-    Dbg_from_CPU_Pkt  pkt_in;
-    memset (& pkt_out, 0, sizeof (Dbg_to_CPU_Pkt));
-    status = recv_from_edbstub (__FUNCTION__, DONT_POLL, & pkt_in);
-    if (status != STATUS_OK) return status;
-
-    *p_rdata = pkt_in.payload;
-    return ((pkt_in.pkt_type == Dbg_from_CPU_RW_OK) ? STATUS_OK : STATUS_ERR);
-}
-
-// ================================================================
-// Internal function to write GPR/CSR/Mem
-
-static
-int write_internal (const Dbg_RW_Target target,
-		    const uint64_t      addr,
-		    const Dbg_RW_Size   rw_size,
-		    const uint64_t      wdata)
-{
-    int status;
-
-    // Send request
-    Dbg_to_CPU_Pkt  pkt_out;
-    memset (& pkt_out, 0, sizeof (Dbg_to_CPU_Pkt));
-    pkt_out.pkt_type  = Dbg_to_CPU_RW;
-    pkt_out.rw_op     = Dbg_RW_WRITE;
-    pkt_out.rw_size   = rw_size;
-    pkt_out.rw_target = target;
-    pkt_out.rw_addr   = addr;
-    pkt_out.rw_wdata  = wdata;
-
-    status = send_to_edbstub (__FUNCTION__, & pkt_out);
-    if (status != STATUS_OK) return status;
-
-    // Receive response
-    Dbg_from_CPU_Pkt  pkt_in;
-    memset (& pkt_out, 0, sizeof (Dbg_to_CPU_Pkt));
-    status = recv_from_edbstub (__FUNCTION__, DONT_POLL, & pkt_in);
-    if (status != STATUS_OK) return status;
-    return ((pkt_in.pkt_type == Dbg_from_CPU_RW_OK) ? STATUS_OK : STATUS_ERR);
-}
-
-static
-int read_dpc_internal (uint64_t *p_dpc)
-{
-    int status = read_internal (Dbg_RW_CSR, addr_csr_dpc, Dbg_MEM_4B, p_dpc);
-    return status;
-}
-
-static
-void fprintf_dpc ()
-{
-    // Read DPC
-    uint64_t dpc;
-    int status = read_dpc_internal (& dpc);
-    if (status != STATUS_OK) {
-	fprintf (stdout, "ERROR: attempting to read DPC\n");
-	return;
-    }
-    fprintf (stdout, "  DPC %08" PRIx64 "\n", dpc);
-}
-
-// ****************************************************************
 // Command execution
 
 // ================================================================
@@ -447,12 +281,12 @@ void exec_help ()
 static
 void exec_help_GPR_Names ()
 {
-    fprintf (stdout, "GPR symbolic names:\n");
-    fprintf (stdout, "    Symbolic         Hex  Decimal\n");
+    fprintf (stdout, "A GPR can be specified with symbolic name or hex or decimal number:\n");
+    fprintf (stdout, "    Symbolic     Hex  Decimal\n");
     for (int j = 0; GPR_ABI_Names [j].name != NULL; j += 1) {
 	fprintf (stdout, "    %4s  x%0d", GPR_ABI_Names [j].name, GPR_ABI_Names [j].val);
 	if (GPR_ABI_Names [j].val < 10) fprintf (stdout, " ");
-	fprintf (stdout, "        0x%0x", GPR_ABI_Names [j].val);
+	fprintf (stdout, "    0x%0x", GPR_ABI_Names [j].val);
 	if (GPR_ABI_Names [j].val < 0x10) fprintf (stdout, " ");
 	fprintf (stdout, " %0d\n", GPR_ABI_Names [j].val);
     }
@@ -461,7 +295,8 @@ void exec_help_GPR_Names ()
 static
 void exec_help_CSR_Names ()
 {
-    fprintf (stdout, "CSR symbolic names:\n");
+    fprintf (stdout, "A CSR can be specified with a 12-bit CSR address (hex or decimal)\n");
+    fprintf (stdout, "or with one of these symbolic names:\n");
     fprintf (stdout, "               Name    Addr\n");
     for (int j = 0; CSR_Names [j].name != NULL; j++)
 	fprintf (stdout, "    %15s    0x%03x\n", CSR_Names [j].name, CSR_Names [j].val);
@@ -489,48 +324,9 @@ void exec_history ()
 static
 void exec_halt ()
 {
-    int              status;
-    Dbg_to_CPU_Pkt   pkt_out;
-    Dbg_from_CPU_Pkt pkt_in;
-
-    // Send HALTREQ
-    memset (& pkt_out, 0, sizeof (Dbg_to_CPU_Pkt));
-    pkt_out.pkt_type = Dbg_to_CPU_HALTREQ;
-    status = send_to_edbstub (__FUNCTION__, & pkt_out);
-    if (status != STATUS_OK) return;
-
-    // Wait for HALTED or ERR response
-    status = recv_from_edbstub (__FUNCTION__, DONT_POLL, & pkt_in);
-    if (status != STATUS_OK) return;
-    if (pkt_in.pkt_type == Dbg_from_CPU_HALTED) {
-	fprintf (stdout, "  CPU halted\n");
-	fprintf_dcsr (stdout, pkt_in.payload);
-	fprintf_dpc ();
-    }
-    else if (pkt_in.pkt_type == Dbg_from_CPU_ERR)
-	fprintf (stdout, "  HALTREQ response is 'error'; CPU may be halted already?\n");
-    else {
-	fprintf (stdout, "ERROR: Unexpected response for HALTREQ\n");
-	fprintf (stdout, "       Expecting HALTED confirmation\n");
-    }
-
-    // ----------------
-    fprintf (stdout, "  Setting dcsr [ebreak*] bits\n");
-
-    uint64_t data;
-
-    // Read DCSR
-    status = read_internal (Dbg_RW_CSR, addr_csr_dcsr, Dbg_MEM_4B, & data);
-    if (status != STATUS_OK) return;
-
-    // Set the various ebreak* bits
-    data = (data | mask_dcsr_ebreakvs | mask_dcsr_ebreakvu
-	    | mask_dcsr_ebreakm | mask_dcsr_ebreaks | mask_dcsr_ebreaku);
-
-    // Write DCSR
-    status = write_internal (Dbg_RW_CSR, addr_csr_dcsr, Dbg_MEM_4B, data);
-    if (status != STATUS_OK) return;
-
+    int status = gdbstub_be_stop (gdbstub_be_xlen);
+    if (status != STATUS_OK)
+	fprintf (stdout, "ERROR: attemping to halt the CPU\n");
 }
 
 // ================================================================
@@ -546,41 +342,57 @@ void exec_loadelf (const char *cmdline)
 	return;
     }
 
-    const int  verbosity         = 0;
-    const bool do_readback_check = true;
-    status = loadELF (verbosity, do_readback_check, filename);
-    if (status == STATUS_OK)
-	fprintf (stdout, "  OK\n");
-    else
-	fprintf (stdout, "ERROR: Unable to load ELF file\n");
+    gdbstub_be_elf_load (filename);
 }
 
 // ================================================================
-// Set a breakpoint
+// Breakpoints
+
+// Breakpoints are stored in EDB in an array of (PC,original-instr)
+// breakpoint-entries. The array is not sorted; free entries have
+// 'invalid' PCs.
 
 typedef struct {
-    uint64_t  addr;     // Use -1 to denote 'invalid'
+    uint64_t  addr;     // PC of breakpoing (use -1 to denote 'invalid')
     uint32_t  instr;    // original instruction at this location
 } Brkpt_Entry;
-
-#define EBREAK_INSTR 0x00100073
 
 #define MAX_NUM_BRKPTS 128
 static
 Brkpt_Entry  breakpoint_arr [MAX_NUM_BRKPTS];
 
+// Command-line set/remove/list breakpoint is just a local operation
+// on this array. ('set' attempts to read memory just to check that
+// the addr is readable).
+
+// When EDB executes 'continue', it replaces instructions in memory at
+// breakpoints with the 'EBREAK' instruction, and holds the original
+// instruction in the breakpoint-entry.
+
+// When EDB regains control after the CPU halts (for whatever reason),
+// the original instructions are restored.
+
+// ----------------------------------------------------------------
+// Set a breakpoint
+
 static
-int set_breakpoint_internal (const uint64_t brk_addr)
+void exec_set_breakpoint (const char *cmdline)
 {
-    uint64_t data;
     int      status;
+
+    // Get breakpoint addr from command line
+    uint64_t  brk_addr;
+    status = parse_1_int_arg (cmdline, & brk_addr);
+    if (status != STATUS_OK) {
+	fprintf (stdout, "ERROR: unable to read 1 int arg (breakpoint addr)\n");
+	return;
+    }
 
     // Check 4-byte alignment
     if ((brk_addr & 0x3) != 0) {
-	fprintf (stdout, "ERROR: breakpoint addr is not 4-byte aligned (0x%" PRIx64 ")\n",
-		 brk_addr);
-	fprintf (stdout, "       Ignoring ...\n");
-	return STATUS_ERR;
+	fprintf (stdout, "ERROR: breakpoint addr is not 4-byte aligned\n");
+	fprintf (stdout, "       Ignoring addr 0x%08" PRIx64 " ...\n", brk_addr);
+	return;
     }
     // Scan breakpoint array for empty slot/duplicate
     int j1 = -1;
@@ -588,46 +400,29 @@ int set_breakpoint_internal (const uint64_t brk_addr)
 	if ((j1 == -1) && (breakpoint_arr [j].addr == -1))
 	    j1 = j;
 	else if (breakpoint_arr [j].addr == brk_addr) {
-	    fprintf (stdout, "Already have a breakpoint at (0x%" PRIx64 ")\n", brk_addr);
-	    fprintf (stdout, "    Ignoring ...\n");
-	    return STATUS_OK;
+	    fprintf (stdout, "NOTE: This is already a breakpoint\n");
+	    fprintf (stdout, "       Ignoring addr 0x%08" PRIx64 " ...\n", brk_addr);
+	    return;
 	}
     }
     if (j1 == -1) {
 	fprintf (stdout, "ERROR: already have maximum number of breakpoints (%0d)\n",
 		 MAX_NUM_BRKPTS);
 	fprintf (stdout, "       Ignoring ...\n");
-	return STATUS_ERR;
-    }
-    // Read instruction at this memory location (for restore when later removing breakpoint)
-    status = read_internal (Dbg_RW_MEM, brk_addr, Dbg_MEM_4B, & data);
-    if (status != STATUS_OK) {
-	fprintf (stdout, "ERROR: failed reading original instruction at addr\n");
-	fprintf (stdout, "       Ignoring ...\n");
-	return status;
-    }
-    // Write EBREAK instruction at this memory location
-    status = write_internal (Dbg_RW_MEM, brk_addr, Dbg_MEM_4B, EBREAK_INSTR);
-    if (status != STATUS_OK) {
-	fprintf (stdout, "ERROR: failed writing EBREAK instruction at addr\n");
-	fprintf (stdout, "       Ignoring ...\n");
-	return status;
-    }
-    breakpoint_arr [j1].addr  = brk_addr;
-    breakpoint_arr [j1].instr = data;
-    return STATUS_OK;
-}
-
-static
-void exec_set_breakpoint (const char *cmdline)
-{
-    uint64_t  brk_addr;
-    int status = parse_1_int_arg (cmdline, & brk_addr);
-    if (status != STATUS_OK) {
-	fprintf (stdout, "ERROR: unable to read 1 int arg (breakpoint addr)\n");
 	return;
     }
-    set_breakpoint_internal (brk_addr);
+    // Check if this memory location is readable
+    // (Note: actual saving of original instr will be done in 'continue')
+    uint64_t rdata;
+    status = gdbstub_be_mem_read (gdbstub_be_xlen, brk_addr, (char *) (& rdata), 4);
+    if (status != STATUS_OK) {
+	fprintf (stdout, "ERROR: failed trying to read breakpoint location\n");
+	fprintf (stdout, "       Ignoring addr 0x%08" PRIx64 " ...\n", brk_addr);
+	return;
+    }
+    breakpoint_arr [j1].addr  = brk_addr;
+    breakpoint_arr [j1].instr = rdata;
+    return;
 }
 
 // ================================================================
@@ -653,7 +448,10 @@ bool rm_breakpoint_internal (const uint64_t brk_addr)
 	return false;
     }
     // Write original instruction back to this memory location
-    int status = write_internal (Dbg_RW_MEM, brk_addr, Dbg_MEM_4B, breakpoint_arr [j1].instr);
+    int status = gdbstub_be_mem_write (gdbstub_be_xlen,
+				       brk_addr,
+				       (char *) & (breakpoint_arr [j1].instr),
+				       4);
     if (status != STATUS_OK) {
 	fprintf (stdout, "  ERROR: failed writing original instruction back to addr\n");
 	fprintf (stdout, "       Ignoring ...\n");
@@ -685,12 +483,10 @@ void exec_ls_breakpoints ()
 {
     // Scan breakpoint array and list valid breakpoints
     int n = 0;
+    fprintf (stdout, "  Current breakoints:\n");
     for (int j = 0; j < MAX_NUM_BRKPTS; j++) {
 	if (breakpoint_arr [j].addr != -1) {
-	    fprintf (stdout, "    %0d: addr 0x%0" PRIx64 "    original instr 0x%08x\n",
-		     j,
-		     breakpoint_arr [j].addr,
-		     breakpoint_arr [j].instr);
+	    fprintf (stdout, "    %0d: addr 0x%0" PRIx64 "\n", j, breakpoint_arr [j].addr);
 	    n++;
 	}
     }
@@ -701,7 +497,6 @@ void exec_ls_breakpoints ()
 // ================================================================
 // Read GPR/CSR/Mem
 
-static
 void exec_read (const char         *cmdline,
 		int                 index,
 		const Dbg_RW_Target target,
@@ -709,29 +504,35 @@ void exec_read (const char         *cmdline,
 {
     int      status, index2;
     uint64_t addr;
+    uint64_t rdata;
+
     if (target == Dbg_RW_GPR) {
 	status = parse_GPR_num (cmdline, index, & addr, & index2);
-	if (status == STATUS_OK)
-	    fprintf (stdout, "Reading GPR x%0" PRId64 "\n", addr);
+	if (status != STATUS_OK)
+	    return;
+
+	fprintf (stdout, "Reading GPR x%0" PRId64 "\n", addr);
+	status = gdbstub_be_GPR_read (gdbstub_be_xlen, addr, & rdata);
     }
     else if (target == Dbg_RW_CSR) {
 	status = parse_CSR_addr (cmdline, index, & addr, & index2);
-	if (status == STATUS_OK)
-	    fprintf (stdout, "Reading CSR 0x%0" PRIx64 "\n", addr);
+	if (status != STATUS_OK)
+	    return;
+
+	fprintf (stdout, "Reading CSR 0x%0" PRIx64 "\n", addr);
+	status = gdbstub_be_CSR_read (gdbstub_be_xlen, addr, & rdata);
     }
     else {
 	assert (target == Dbg_RW_MEM);
 	status = parse_1_int_arg (cmdline + index, & addr);
-	if (status == STATUS_OK)
-	    fprintf (stdout, "Reading Mem [0x%0" PRIx64 "]\n", addr);
-    }
-    if (status != STATUS_OK) {
-	fprintf (stdout, "ERROR: unable to read GPR num/CSR addr/Mem addr\n");
-	return;
+	if (status != STATUS_OK)
+	    return;
+
+	fprintf (stdout, "Reading Mem [0x%0" PRIx64 "]\n", addr);
+	status = gdbstub_be_mem_read (gdbstub_be_xlen, addr, (char *) (& rdata),
+				      ((gdbstub_be_xlen==32) ? 4 : 8));
     }
 
-    uint64_t rdata;
-    status = read_internal (target, addr, rw_size, & rdata);
     if (status == STATUS_OK)
 	fprintf (stdout, "  Read-value: 0x%0" PRIx64 "\n", rdata);
     else
@@ -740,67 +541,13 @@ void exec_read (const char         *cmdline,
 
 // ================================================================
 // Read n_bytes from remote CPU's memory, by iterating read_internal().
+// This is used by loadELF for a readback check after loading an ELF into memory.
 
 int exec_read_buf (const uint64_t  start_addr,
 		   const int       n_bytes,
 		         uint8_t  *p_rdata)
 {
-    int      status;
-    uint64_t addr   = start_addr;
-    int      offset = 0;
-    uint64_t data;
-
-    if (offset >= n_bytes) return STATUS_OK;
-
-    // Do leading 1-byte alignment, if any
-    if ((addr & 0x1) == 1) {
-	status = read_internal (Dbg_RW_MEM, addr, Dbg_MEM_1B, & data);
-	if (status != STATUS_OK) return status;
-	memcpy (p_rdata + offset, & data, 1);
-	offset += 1;
-	addr   += 1;
-    }
-    if (offset >= n_bytes) return STATUS_OK;
-
-    // Is now 2-byte aligned
-    assert (((addr + offset) & 0x1) == 0);
-    // Do leading 2-byte alignment, if any
-    if ((addr & 0x3) == 2) {
-	status = read_internal (Dbg_RW_MEM, addr, Dbg_MEM_2B, & data);
-	if (status != STATUS_OK) return status;
-	memcpy (p_rdata + offset, & data, 2);
-	offset += 2;
-	addr   += 2;
-    }
-    if (offset >= n_bytes) return STATUS_OK;
-
-    // Is now 4-byte aligned
-    assert (((addr + offset) & 0x3) == 0);
-    // Do remaining 4-byte reads
-    while ((offset + 4) <= n_bytes) {
-	status = read_internal (Dbg_RW_MEM, addr, Dbg_MEM_4B, & data);
-	if (status != STATUS_OK) return status;
-	memcpy (p_rdata + offset, & data, 4);
-	offset += 4;
-	addr   += 4;
-    }
-
-    // Do trailing 2-byte alignment, if any
-    if ((n_bytes - offset) >= 2) {
-	status = read_internal (Dbg_RW_MEM, addr, Dbg_MEM_2B, & data);
-	if (status != STATUS_OK) return status;
-	memcpy (p_rdata + offset, & data, 2);
-	offset += 2;
-	addr   += 2;
-    }
-
-    // Do trailing 1-byte alignment, if any
-    if ((n_bytes - offset) == 1) {
-	status = read_internal (Dbg_RW_MEM, addr, Dbg_MEM_1B, & data);
-	if (status != STATUS_OK) return status;
-	memcpy (p_rdata + offset, & data, 1);
-    }
-    return STATUS_OK;
+    return gdbstub_be_mem_read (gdbstub_be_xlen, start_addr, (char *) p_rdata, n_bytes);
 }
 
 // ================================================================
@@ -808,7 +555,7 @@ int exec_read_buf (const uint64_t  start_addr,
 
 static
 void exec_write (const char         *cmdline,
-		int                  index,
+		 int                 index,
 		 const Dbg_RW_Target target,
 		 const Dbg_RW_Size   rw_size)
 {
@@ -817,8 +564,9 @@ void exec_write (const char         *cmdline,
     uint64_t addr;
     if (target == Dbg_RW_GPR) {
 	status = parse_GPR_num (cmdline, index, & addr, & index2);
-	if (status == STATUS_OK)
-	    fprintf (stdout, "Writing GPR x%0" PRId64 "\n", addr);
+	if (status != STATUS_OK)
+	    return;
+	fprintf (stdout, "Writing GPR x%0" PRId64 "\n", addr);
     }
     else if (target == Dbg_RW_CSR) {
 	status = parse_CSR_addr (cmdline, index, & addr, & index2);
@@ -838,7 +586,7 @@ void exec_write (const char         *cmdline,
 	return;
     }
 
-    // Parse w-data
+    // Parse wdata
     uint64_t wdata;
     int n = sscanf (cmdline + index2, "%" SCNi64, & wdata);
     if (n != 1) {
@@ -847,7 +595,16 @@ void exec_write (const char         *cmdline,
     }
     fprintf (stdout, "    wdata = %0" PRIx64 "\n", wdata);
 
-    status = write_internal (target, addr, rw_size, wdata);
+    if (target == Dbg_RW_GPR)
+	status = gdbstub_be_GPR_write (gdbstub_be_xlen, addr, wdata);
+    else if (target == Dbg_RW_CSR)
+	status = gdbstub_be_CSR_write (gdbstub_be_xlen, addr, wdata);
+    else {
+	assert (target == Dbg_RW_MEM);
+	status = gdbstub_be_mem_write (gdbstub_be_xlen, addr, (char *) (& wdata),
+				       ((gdbstub_be_xlen == 32) ? 4 : 8));
+    }
+
     if (status == STATUS_OK)
 	fprintf (stdout, "  OK\n");
     else
@@ -856,67 +613,13 @@ void exec_write (const char         *cmdline,
 
 // ================================================================
 // Write n_bytes to remote CPU's mem by iterating write_internal()
+// This is used by loadELF to load an ELf into memory.
 
 int exec_write_buf (const uint64_t  start_addr,
 		    const int       n_bytes,
 		    const uint8_t  *p_wdata)
 {
-    int      status;
-    uint64_t addr   = start_addr;
-    uint64_t data;
-    int      offset = 0;
-
-    if (offset >= n_bytes) return STATUS_OK;
-
-    // Do leading 1-byte alignment, if any
-    if ((addr & 0x1) == 1) {
-	memcpy (& data, p_wdata + offset, 1);
-	status = write_internal (Dbg_RW_MEM, addr, Dbg_MEM_1B, data);
-	if (status != STATUS_OK) return status;
-	offset += 1;
-	addr   += 1;
-    }
-    if (offset >= n_bytes) return STATUS_OK;
-
-    // Is now 2-byte aligned
-    assert (((addr + offset) & 0x1) == 0);
-    // Do leading 2-byte alignment, if any
-    if ((addr & 0x3) == 2) {
-	memcpy (& data, p_wdata + offset, 2);
-	status = write_internal (Dbg_RW_MEM, addr, Dbg_MEM_2B, data);
-	if (status != STATUS_OK) return status;
-	offset += 2;
-	addr   += 2;
-    }
-    if (offset >= n_bytes) return STATUS_OK;
-
-    // Is now 4-byte aligned
-    assert (((addr + offset) & 0x3) == 0);
-    // Do remaining 4-byte reads
-    while ((offset + 4) <= n_bytes) {
-	memcpy (& data, p_wdata + offset, 4);
-	status = write_internal (Dbg_RW_MEM, addr, Dbg_MEM_4B, data);
-	if (status != STATUS_OK) return status;
-	offset += 4;
-	addr   += 4;
-    }
-
-    // Do trailing 2-byte alignment, if any
-    if ((n_bytes - offset) >= 2) {
-	memcpy (& data, p_wdata + offset, 2);
-	status = write_internal (Dbg_RW_MEM, addr, Dbg_MEM_2B, data);
-	if (status != STATUS_OK) return status;
-	offset += 2;
-	addr   += 2;
-    }
-
-    // Do trailing 1-byte alignment, if any
-    if ((n_bytes - offset) == 1) {
-	memcpy (& data, p_wdata + offset, 1);
-	status = write_internal (Dbg_RW_MEM, addr, Dbg_MEM_1B, data);
-	if (status != STATUS_OK) return status;
-    }
-    return STATUS_OK;
+    return gdbstub_be_mem_write (gdbstub_be_xlen, start_addr, (char *) p_wdata, n_bytes);
 }
 
 // ================================================================
@@ -982,8 +685,7 @@ void exec_dumpmem (const char *cmdline, int index)
     fprintf (stdout, "Dumping mem from addr1 %0" PRIx64 " to addr2 %0" PRIx64 "\n",
 	     addr1, addr2);
     if (addr1 >= addr2) {
-	fprintf (stdout, "Nothing to print: addr1 (%0" PRIx64 ") > addr2 (%0" PRIx64 ")\n",
-		 addr1, addr2);
+	fprintf (stdout, "  Empty addr range; no-op\n");
 	return;
     }
 
@@ -993,7 +695,7 @@ void exec_dumpmem (const char *cmdline, int index)
 
     // Read and show leading misaligned 1-byte, if any
     if ((addr1 & 0x1) == 1) {
-	status = read_internal (Dbg_RW_MEM, addr1, Dbg_MEM_1B, & rdata);
+	status = gdbstub_be_mem_read (gdbstub_be_xlen, addr1, (char *) (& rdata), 1);
 	if (status != STATUS_OK) {
 	    fprintf (stdout, "ERROR: unable to read mem byte at addr %0" PRIx64 "\n",
 		     addr1);
@@ -1006,8 +708,8 @@ void exec_dumpmem (const char *cmdline, int index)
     assert ((addr1 & 0x1) == 0);
 
     // Read and show leading misaligned 2-bytes, if any
-    if ((addr1 & 0x3) == 2) {
-	status = read_internal (Dbg_RW_MEM, addr1, Dbg_MEM_2B, & rdata);
+    if ((addr1 < addr2) && ((addr1 & 0x3) == 2)) {
+	status = gdbstub_be_mem_read (gdbstub_be_xlen, addr1, (char *) (& rdata), 2);
 	if (status != STATUS_OK) {
 	    fprintf (stdout, "ERROR: unable to read 2 mem bytes at addr %0" PRIx64 "\n",
 		     addr1);
@@ -1020,8 +722,8 @@ void exec_dumpmem (const char *cmdline, int index)
     assert ((addr1 & 0x3) == 0);
 
     // Read and show aligned 4-bytes, if any
-    while ((addr2 - addr1) >= 4) {
-	status = read_internal (Dbg_RW_MEM, addr1, Dbg_MEM_4B, & rdata);
+    while ((addr1 < addr2) && ((addr2 - addr1) >= 4)) {
+	status = gdbstub_be_mem_read (gdbstub_be_xlen, addr1, (char *) (& rdata), 4);
 	if (status != STATUS_OK) {
 	    fprintf (stdout, "ERROR: unable to read 4 mem bytes at addr %0" PRIx64 "\n",
 		     addr1);
@@ -1033,8 +735,8 @@ void exec_dumpmem (const char *cmdline, int index)
     }
 
     // Read and show trailing misaligned 2-bytes, if any
-    if ((addr2 - addr1) >= 2) {
-	status = read_internal (Dbg_RW_MEM, addr1, Dbg_MEM_2B, & rdata);
+    if ((addr1 < addr2) && ((addr2 - addr1) >= 2)) {
+	status = gdbstub_be_mem_read (gdbstub_be_xlen, addr1, (char *) (& rdata), 2);
 	if (status != STATUS_OK) {
 	    fprintf (stdout, "ERROR: unable to read 2 mem bytes at addr %0" PRIx64 "\n",
 		     addr1);
@@ -1046,8 +748,8 @@ void exec_dumpmem (const char *cmdline, int index)
     }
 
     // Read and show trailing misaligned 1-byte, if any
-    if ((addr2 - addr1) == 1) {
-	status = read_internal (Dbg_RW_MEM, addr1, Dbg_MEM_1B, & rdata);
+    if ((addr1 < addr2) && ((addr2 - addr1) == 1)) {
+	status = gdbstub_be_mem_read (gdbstub_be_xlen, addr1, (char *) (& rdata), 1);
 	if (status != STATUS_OK) {
 	    fprintf (stdout, "ERROR: unable to read 1 mem byte at addr %0" PRIx64 "\n",
 		     addr1);
@@ -1063,99 +765,27 @@ void exec_dumpmem (const char *cmdline, int index)
 }
 
 // ================================================================
+// exec_stepi()
 // Resume running the remote CPU for exactly 1 instruction ('stepi' command)
 // and wait for remote CPU to halt (after 1 instruction).
 
-// Arg 'only_if_breakpoint' true => step only if we are at a
-// breakpoint, else skip.
-
 static
-void exec_stepi (const bool only_if_breakpoint)
+void exec_stepi ()
 {
-    int              status;
-    uint64_t         dpc, data;
-    Dbg_to_CPU_Pkt   pkt_out;
-    Dbg_from_CPU_Pkt pkt_in;
-
-    // ----------------
-    // Read CSR DPC and remove breakpoint there, if any
-    fprintf (stdout, "  Reading CSR DPC\n");
-    status = read_dpc_internal (& dpc);
-    if (status != STATUS_OK) {
-	fprintf (stdout, "ERROR: attempting to read CSR DPC\n");
-	return;
-    }
-    fprintf (stdout, "  Removing breakpoint, if any, at CSR DPC 0x%0" PRIx64 "\n", dpc);
-    fprintf (stdout, "      (restoring original instr)\n");
-    bool is_breakpoint = rm_breakpoint_internal (dpc);
-
-    if (only_if_breakpoint && (! is_breakpoint)) return;
-
-    // ----------------
-    fprintf (stdout, "  Setting CSR DCSR [step] bit\n");
-
-    // Read CSR DCSR
-    status = read_internal (Dbg_RW_CSR, addr_csr_dcsr, Dbg_MEM_4B, & data);
-    if (status != STATUS_OK) return;
-
-    // Set the 'step' bit
-    data = data | mask_dcsr_step;
-
-    // Write DCSR
-    status = write_internal (Dbg_RW_CSR, addr_csr_dcsr, Dbg_MEM_4B, data);
-    if (status != STATUS_OK) return;
-
-    // ----------------
-    fprintf (stdout, "  Resuming execution\n");    // Will single-step
-
-    memset (& pkt_out, 0, sizeof (Dbg_to_CPU_Pkt));
-    pkt_out.pkt_type = Dbg_to_CPU_RESUMEREQ;
-    status = send_to_edbstub (__FUNCTION__, & pkt_out);
-    if (status != STATUS_OK) return;
-
-    // ----------------
-    fprintf (stdout, "  Awaiting RUNNING confirmation\n");
-
-    status = recv_from_edbstub (__FUNCTION__, DONT_POLL, & pkt_in);
-    if (status != STATUS_OK) return;
-    if (pkt_in.pkt_type != Dbg_from_CPU_RUNNING) {
-	fprintf (stdout, "ERROR: stepi command: did not get RUNNING confirmation\n");
-	return;
-    }
-
-    // ----------------
-    fprintf (stdout, "  Awaiting HALTED from remote CPU\n");    // after 1 instr
-
-    status = recv_from_edbstub (__FUNCTION__, DONT_POLL, & pkt_in);
-    if (status != STATUS_OK) return;
-    if (pkt_in.pkt_type != Dbg_from_CPU_HALTED) {
-	fprintf (stdout, "ERROR: stepi command: did not get HALTED confirmation\n");
-	return;
-    }
-
-    fprintf (stdout, "  CPU halted\n");
-    fprintf_dcsr (stdout, pkt_in.payload);
-    fprintf_dpc ();
-
-    // ----------------
-    // Restore breakpoint if there was one before stepping
-    if (is_breakpoint) {
-	fprintf (stdout, "  Restoring breakpoint at 0x%0" PRIx64 "\n", dpc);
-	status = set_breakpoint_internal (dpc);
-	if (status != STATUS_OK)
-	    fprintf (stdout, "ERROR: couldn't set breakpoint at 0x%0" PRIx64 "\n", dpc);
-    }
+    int status = gdbstub_be_step (gdbstub_be_xlen);
+    if (status != STATUS_OK)
+	fprintf (stdout, "ERROR: while trying to stepi\n");
 }
 
 // ================================================================
 // Resume running the remote CPU ('continue' command)
 // and wait for:
 //     either: remote CPU halts (breakpoint)
-//     or:     user types 'halt' to force a halt
+//     or:     user types anything to force a halt
 
 // ----------------
 // trygetchar()
-// Returns next input character (ASCII code) from fd.
+// Polls for next input character (ASCII code) from fd (keyboard).
 // Returns -2 if read-err, -1 if no input is available, else the char
 
 static
@@ -1195,59 +825,129 @@ int trygetchar (const int fd)
 }
 
 // ----------------------------------------------------------------
+// Strategy for 'continue':
+
+// * Single step the first instruction
+// * Set all breakpoints (saving original instrs)
+//        Note: instr mem could have changed before this.
+// * continue execution (until self-halt or halt request)
+// * Restore original instrs at all breakpoints
+//        Note: instr mem may be viewed after this.
+
+#define EBREAK_INSTR 0x00100073
 
 static
 void exec_continue ()
 {
-    int              status;
-    uint64_t         data;
-    Dbg_to_CPU_Pkt   pkt_out;
-    Dbg_from_CPU_Pkt pkt_in;
+    int      status, n_brks;
+    uint64_t rdata, wdata, brk_addr;
+    uint32_t orig_instr, dcsr_ebreak_bits_mask, dcsr_ebreak_step_bits_original;
 
-    // ----------------
-    // If the current halt-point is a breakpoint, first do a single-step
-    // (will restore original instr, step, re-install the breakpoint).
+    // ----------------------------------------------------------------
+    // Single-step first instruction, before arming breakpoints
+    if (verbosity != 0)
+	fprintf (stdout, "  Single-stepping first instruction before arming breakpoints\n");
 
-    fprintf (stdout, "  If current instr is breakpoint, step it\n");
-    bool only_if_breakpoint = true;
-    exec_stepi (only_if_breakpoint);
-
-    // ----------------
-    fprintf (stdout, "  Ready to continue: clearing DCSR [step] bit\n");
-
-    // Read CSR DCSR
-    status = read_internal (Dbg_RW_CSR, addr_csr_dcsr, Dbg_MEM_4B, & data);
-    if (status != STATUS_OK) return;
-
-    // Clear the 'step' bit
-    data = data & (~ mask_dcsr_step);
-
-    // Write DCSR
-    status = write_internal (Dbg_RW_CSR, addr_csr_dcsr, Dbg_MEM_4B, data);
-    if (status != STATUS_OK) return;
-
-    // ----------------
-    fprintf (stdout, "  Resuming execution\n");    // Will run (not single-step)
-
-    memset (& pkt_out, 0, sizeof (Dbg_to_CPU_Pkt));
-    pkt_out.pkt_type = Dbg_to_CPU_RESUMEREQ;
-    status = send_to_edbstub (__FUNCTION__, & pkt_out);
-    if (status != STATUS_OK) return;
-
-    // ----------------
-    fprintf (stdout, "  Awaiting RUNNING confirmation\n");
-
-    status = recv_from_edbstub (__FUNCTION__, DONT_POLL, & pkt_in);
-    if (status != STATUS_OK) return;
-    if (pkt_in.pkt_type != Dbg_from_CPU_RUNNING) {
-	fprintf (stdout, "ERROR: continue command: did not get RUNNING confirmation\n");
+    status = gdbstub_be_step (gdbstub_be_xlen);
+    if (status != STATUS_OK) {
+	fprintf (stdout, "ERROR: during first-instruction single-step on 'continue'\n");
 	return;
     }
-    fprintf (stdout, "  ... running ...; type 'h'/'halt' to force halt of remote CPU\n");
+
+    // ----------------------------------------------------------------
+    // Insert all breakpoints
+    if (verbosity != 0)
+	fprintf (stdout, "  Insert all breakpoints\n");
+    // ----------------
+    // Read original instrs at all breakpoints
+    if (verbosity != 0)
+	fprintf (stdout, "    Read and save original instrs at breakpoints\n");
+    for (int j = 0; j < MAX_NUM_BRKPTS; j++) {
+	// Skip if this is not a valid breakpoint
+	if ((breakpoint_arr [j].addr & 0x1) == 1) continue;
+
+	// Read instruction at this memory location, for later restore
+	brk_addr = breakpoint_arr [j].addr;
+	status = gdbstub_be_mem_read (gdbstub_be_xlen, brk_addr, (char *) (& rdata), 4);
+	if (status != STATUS_OK) {
+	    fprintf (stdout, "ERROR: In 'continue', while inserting breakpoints\n");
+	    fprintf (stdout, "    Failed read original instruction @ %08" PRIx64 "\n",
+		     brk_addr);
+	    fprintf (stdout, "    Please first remove that breakpoint\n");
+	    return;
+	}
+	if (verbosity != 0)
+	    fprintf (stdout, "    Original instr @ %08" PRIx64 " is 0x%08" PRIx64 "\n",
+		     brk_addr, rdata);
+	breakpoint_arr [j].instr = rdata;
+    }
+    // ----------------
+    // Write EBREAK instruction at all breakpoints
+    if (verbosity != 0)
+	fprintf (stdout, "    Write EBREAK instr at all breakpoints\n");
+    n_brks = 0;
+    for (int j = 0; j < MAX_NUM_BRKPTS; j++) {
+	// Skip if this is not a valid breakpoint
+	if ((breakpoint_arr [j].addr & 0x1) == 1) continue;
+
+	// Write EBREAK instruction at this memory location
+	wdata    = EBREAK_INSTR;
+	brk_addr = breakpoint_arr [j].addr;
+	if (verbosity != 0)
+	    fprintf (stdout, "    Set @ %08" PRIx64 " to EBREAK instr (0x%08x)\n",
+		     brk_addr, EBREAK_INSTR);
+	status = gdbstub_be_mem_write (gdbstub_be_xlen, brk_addr, (char *) (& wdata), 4);
+	n_brks++;
+	if (status != STATUS_OK) {
+	    fprintf (stdout, "ERROR: In 'continue', while inserting breakpoints\n");
+	    fprintf (stdout, "    Failed write @ %08" PRIx64 " EBREAK instruction\n",
+		     brk_addr);
+	    fprintf (stdout, "    There will be no breakpoint at that addr\n");
+	}
+    }
+    if (verbosity != 0)
+	fprintf (stdout, "    %0d breakpoints inserted\n", n_brks);
+
+    // ----------------------------------------------------------------
+    // Set DCSR.{EBREAK*} bits, clear DCSR.STEP (and remember original settings)
+    if (verbosity != 0)
+	fprintf (stdout, "  Set dcsr [ebreak*] bits, clear DCRS [step] bit\n");
+    // Read DCSR
+    status = gdbstub_be_CSR_read (gdbstub_be_xlen, addr_csr_dcsr, & rdata);
+    if (status != STATUS_OK) {
+	fprintf (stdout, "ERROR: In 'continue', while arming breakpoints\n");
+	fprintf (stdout, "    Failed reading CSR DCSR (to set ebreak* bits)\n");
+	return;
+    }
+    // Remember EBREAK* and STEP bits (to restore after 'continue')
+    dcsr_ebreak_bits_mask = (mask_dcsr_ebreakvs | mask_dcsr_ebreakvu
+			     | mask_dcsr_ebreakm | mask_dcsr_ebreaks
+			     | mask_dcsr_ebreaku);
+    dcsr_ebreak_step_bits_original = (rdata & (dcsr_ebreak_bits_mask | mask_dcsr_step));
+    // Set the various ebreak* bits
+    wdata = (rdata | dcsr_ebreak_bits_mask);
+    // Clear the step bit
+    wdata = (wdata & (~ mask_dcsr_step));
+    // Write back DCSR
+    if (verbosity != 0)
+	fprintf (stdout, "  Updating DCSR: %08" PRIx64 " => %08" PRIx64 "\n", rdata, wdata);
+    status = gdbstub_be_CSR_write (gdbstub_be_xlen, addr_csr_dcsr, wdata);
+    if (status != STATUS_OK){
+	fprintf (stdout, "ERROR: In 'continue', while updating CSR ebreak*/step bits\n");
+	fprintf (stdout, "    Failed writing back CSR DCSR\n");
+	return;
+    }
 
     // ----------------
-    fprintf (stdout, "  Awaiting HALTED from remote CPU or 'h'/'halt' on keyboard\n");
+    // Resume execution
+    status = gdbstub_be_continue (gdbstub_be_xlen);
+    if (status != STATUS_OK)
+	return;
 
+    // ----------------
+    fprintf (stdout, "  ... running ... (awaiting HALTED from remote CPU)\n");
+    fprintf (stdout, "  To force halt, type anything on the keyboard\n");
+    fprintf (stdout, "      (<newline> by itself is enough; input is discarded)\n");
     int ch = 0;
     while (true) {
 	// Only check for first 'h'
@@ -1255,49 +955,94 @@ void exec_continue ()
 	    // Check for 'h' input on stdin terminal
 	    ch = trygetchar (fileno (stdin));
 	    if (ch == -2) {
-		fprintf (stdout, "ERROR polling terminal for 'h'\n");
-		return;
+		fprintf (stdout, "ERROR: in polling for keyboard activity\n");
 	    }
 	    else if (ch == -1) {    // no chars avail
 		// skip
 	    }
 	    else {
-		if (ch == 'h') {
-		    memset (& pkt_out, 0, sizeof (Dbg_to_CPU_Pkt));
-		    pkt_out.pkt_type = Dbg_to_CPU_HALTREQ;
-		    status = send_to_edbstub (__FUNCTION__, & pkt_out);
-		    if (status != STATUS_OK) return;
-		}
-		else {
-		    fprintf (stdout, "ERROR: unexpected keyboard input; only 'h' expected\n");
-		    fprintf (stdout, "    while remote CPU is running\n");
-		    fprintf (stdout, "    Ignoring ...\n");
-		}
-		// Consume and discard rest of line
-		int ch1 = 0;
+		fprintf (stdout, "  Forcing CPU halt due to keyboard activity ...\n");
+		// Consume and discard rest of keyboard input line
+		int ch1 = ch;
 		while (ch1 != '\n') ch1 = fgetc (stdin);
+		ch = 'h';    // Don't poll keyboard any more
+		status = gdbstub_be_stop (gdbstub_be_xlen);
+		if (status != STATUS_OK)
+		    fprintf (stdout, "ERROR: attempting CPU 'halt'\n");
+		break;
 	    }
 	}
-	// Only poll if we haven't sent a HALTREQ
-	Poll do_poll = ((ch == 'h') ? DONT_POLL : DO_POLL);
-	status = recv_from_edbstub (__FUNCTION__, do_poll, & pkt_in);
+	status = gdbstub_be_poll_for_halted (gdbstub_be_xlen);
 	if (status == STATUS_UNAVAIL) {
 	    usleep (1000);
 	    continue;
 	}
-	else if (status != STATUS_OK)
-	    return;
-	else if (pkt_in.pkt_type == Dbg_from_CPU_HALTED) {
-	    fprintf (stdout, "  CPU halted\n");
-	    fprintf_dcsr (stdout, pkt_in.payload);
-	    fprintf_dpc ();
+	else {
+	    if (status != STATUS_OK)
+		fprintf (stdout, "ERROR: polling CPU for HALTED state\n");
 	    break;
 	}
-	else {
-	    fprintf (stdout, "ERROR: continue command: did not get HALTED confirmation\n");
-	    return;
+    }
+
+    // ----------------
+    // Restore all breakpoints with original instructions
+    // Read CSR DPC if it is at a breakpoint, remove the breakpoint
+    // Then: write EBREAK instruction at all breakpoints
+    if (verbosity != 0)
+	fprintf (stdout, "  Disarm all breakpoints (restore pre-EBREAK instrs)\n");
+    n_brks = 0;
+    for (int j = 0; j < MAX_NUM_BRKPTS; j++) {
+	// Skip if this is not a valid breakpoint
+	if ((breakpoint_arr [j].addr & 0x1) == 1) continue;
+
+	// Restore original instruction at this memory location
+	brk_addr   = breakpoint_arr [j].addr;
+	orig_instr = breakpoint_arr [j].instr;
+	if (verbosity != 0)
+	    fprintf (stdout, "    Restore @ %08" PRIx64 " instr 0x%08x\n",
+		     brk_addr, orig_instr);
+	status = gdbstub_be_mem_write (gdbstub_be_xlen, brk_addr, (char *) (& orig_instr), 4);
+	n_brks++;
+	if (status != STATUS_OK) {
+	    // Note: this failure can occur even if previous breakpoint-arming succeeded
+	    //       if, for example, PMPs have changed during the program-run
+	    fprintf (stdout, "ERROR: In 'continue', while restoring breakpoint instr\n");
+	    fprintf (stdout, "    Failed write @ %08" PRIx64 " instr %08x\n",
+		     brk_addr, orig_instr);
 	}
     }
+
+    // ----------------
+    // Print halt cause, for information
+    if (verbosity != 0)
+	fprintf (stdout, "  Restore dcsr [ebreak*] bits\n");
+    // Read DCSR
+    status = gdbstub_be_CSR_read (gdbstub_be_xlen, addr_csr_dcsr, & rdata);
+    if (status != STATUS_OK) {
+	fprintf (stdout, "ERROR: In 'continue', while arming breakpoints\n");
+	fprintf (stdout, "    Failed reading CSR DCSR (to restore ebreak* bits)\n");
+	return;
+    }
+    fprintf_dcsr_cause (stdout, "  CPU halt reason: ", rdata, "\n");
+    
+    // ----------------
+    // Restore DCSR's original ebreak* and step bits
+    // Restore ebreak bits
+    wdata = ((rdata & (~ (dcsr_ebreak_bits_mask | mask_dcsr_step)))
+	     | dcsr_ebreak_step_bits_original);
+    if (verbosity != 0)
+	fprintf (stdout, "  Restoring DCSR: %08" PRIx64 " => %08" PRIx64 "\n", rdata, wdata);
+    // Write back DCSR
+    status = gdbstub_be_CSR_write (gdbstub_be_xlen, addr_csr_dcsr, wdata);
+    if (status != STATUS_OK){
+	fprintf (stdout, "ERROR: In 'continue', while arming breakpoints\n");
+	fprintf (stdout, "    Failed writing back CSR DCSR (to restore ebreak* bits)\n");
+	return;
+    }
+
+    // ----------------
+    if (verbosity != 0)
+	fprintf (stdout, "    %0d breakpoints disarmed\n", n_brks);
 }
 
 // ================================================================
@@ -1306,12 +1051,8 @@ void exec_continue ()
 static
 void exec_quit ()
 {
-    Dbg_to_CPU_Pkt   pkt_out;
-
-    // Send QUIT
-    memset (& pkt_out, 0, sizeof (Dbg_to_CPU_Pkt));
-    pkt_out.pkt_type = Dbg_to_CPU_QUIT;
-    send_to_edbstub (__FUNCTION__, & pkt_out);
+    fprintf (stdout, "Quitting ...\n");
+    gdbstub_be_final (gdbstub_be_xlen);
 }
 
 // ****************************************************************
@@ -1363,13 +1104,13 @@ void interactive_command_loop ()
 	case CMD_HELP_CSR_NAMES: exec_help_CSR_Names (); break;
 	case CMD_HISTORY: exec_history ();               break;
 
-	case CMD_LOADELF:  exec_loadelf (cmdline + index);             break;
-	case CMD_BRK:      exec_set_breakpoint (cmdline + index);      break;
-	case CMD_RMBRK:    exec_rm_breakpoint (cmdline + index);       break;
-	case CMD_LSBRKS:   exec_ls_breakpoints ();                     break;
-	case CMD_STEPI:    exec_stepi (/*only_if_breakpoint=*/false ); break;
-	case CMD_CONTINUE: exec_continue ();                           break;
-	case CMD_HALT:     exec_halt ();                               break;
+	case CMD_LOADELF:  exec_loadelf (cmdline + index);        break;
+	case CMD_BRK:      exec_set_breakpoint (cmdline + index); break;
+	case CMD_RMBRK:    exec_rm_breakpoint (cmdline + index);  break;
+	case CMD_LSBRKS:   exec_ls_breakpoints ();                break;
+	case CMD_STEPI:    exec_stepi ();                         break;
+	case CMD_CONTINUE: exec_continue ();                      break;
+	case CMD_HALT:     exec_halt ();                          break;
 
 	case CMD_RGPR: exec_read  (cmdline, index, Dbg_RW_GPR, Dbg_MEM_4B); break;
 	case CMD_RCSR: exec_read  (cmdline, index, Dbg_RW_CSR, Dbg_MEM_4B); break;
@@ -1396,16 +1137,17 @@ void print_help (FILE *fd, int argc, char *argv [])
     fprintf (fd, "Usage: %s  <optional flags>\n", argv [0]);
     fprintf (fd, "  Flags:\n");
     fprintf (fd, "  --help, -h    Print this help text and quit\n");
-    fprintf (fd, "  --log,  -l    Record communications with edbstub in file '%s'\n",
+    fprintf (fd, "  --log,  -l    Record remote communication with CPU in file '%s'\n",
 	     edb_log_filename);
     fprintf (fd, "  The program will enter an interactive command-loop\n");
-    fprintf (fd, "  where you can type 'help' for a list of interctive commands\n");
+    fprintf (fd, "  where you can type 'help' for a list of interactive commands\n");
 }
 
 int main (int argc, char *argv [])
 {
-    fprintf (stdout, "EDB v.1.00 ((c) 2024 R.S.Nikhil, Bluespec Inc.)\n");
-    fprintf (stdout, "    Rerun with --help for help.\n");
+    fprintf (stdout, "EDB v.1.10 (c) 2024 R.S.Nikhil, Bluespec Inc.\n");
+    fprintf (stdout, "  Rerun with --help or -h for help on command-line args.\n");
+    fprintf (stdout, "  In interactive command loop type 'help' for more help\n");
 
     for (int j = 0; j < argc; j++) {
 	if ((strcmp (argv [j], "--help") == 0) || (strcmp (argv [j], "-h") == 0)) {
@@ -1414,26 +1156,25 @@ int main (int argc, char *argv [])
 	}
     }
 
+    FILE *flog = NULL;
+
     for (int j = 0; j < argc; j++) {
-	if (strcmp (argv [j], "-log") == 0) {
+	if ((strcmp (argv [j], "--log") == 0) || (strcmp (argv [j], "-l") == 0)) {
 	    flog = fopen (edb_log_filename, "w");
-	    if (flog == NULL) {
+	    if (flog == NULL)
 		fprintf (stdout, "ERROR: unable to open file '%s'\n", edb_log_filename);
-		fprintf (stdout, "       Proceeding without logging\n");
-	    }
-	    fprintf (stdout, "Logging communication with edbstub in %s\n",
+	    fprintf (stdout, "Logging communication with RISC-V server in: %s\n",
 		     edb_log_filename);
 	    break;
 	}
     }
+    if (flog == NULL)
+	fprintf (stdout, "Not logging communication with RISC-V server.\n");
 
     // Open TCP connection to remote edbstub server
-    int status;
-    status = tcp_client_open (server_hostname, server_listen_port);
-    if (status == STATUS_ERR) {
-	fprintf (stdout, "ERROR: tcp_client_open\n");
+    int status = gdbstub_be_init (flog, false);
+    if (status == STATUS_ERR)
 	return 1;
-    }
     
     for (int j = 0; j < MAX_NUM_BRKPTS; j++)
 	breakpoint_arr [j].addr = -1;
@@ -1442,18 +1183,6 @@ int main (int argc, char *argv [])
     
     interactive_command_loop ();
 
-    // ================================================================
-    // Postlude
-    fprintf (stdout, "Quitting ... (waiting for TCP shutdown)\n");
-
-    // Wait 1 sec so 'QUIT' message reaches stub
-    sleep (1);
-
-    status = tcp_client_close (0);
-    if (status == STATUS_ERR) {
-	fprintf (stdout, "ERROR: tcp_client_close\n");
-	return 1;
-    }
     return 0;
 }
 
@@ -1461,7 +1190,5 @@ int main (int argc, char *argv [])
 // TODO (FUTURE IMPROVEMENTS)
 
 // Add 'loadmemhex32' command, like 'loadELF'
-// In read_buf/write_buf, do 64-bit reads if remote server supports it.
-// In read_buf/write_buf, pipeline write requests and responses, instead of one-at-a-time.
 
 // ****************************************************************
