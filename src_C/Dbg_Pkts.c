@@ -54,7 +54,6 @@ void print_to_CPU_pkt (FILE *fd,
 	}
 
 	if (p_pkt->rw_op == Dbg_RW_WRITE) fprintf (fd, " 0x%0" PRIx64, p_pkt->rw_wdata);
-	fprintf (fd, "");
 	break;
     }
     case Dbg_to_CPU_QUIT: fprintf (fd, " QUIT");   break;
