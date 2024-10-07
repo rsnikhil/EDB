@@ -1,8 +1,8 @@
 # Copyright (c) 2024 Rishiyur S. Nikhil and Bluespec, Inc.  All Rights Reserved.
 # ================================================================
 
-EXE1 ?= exe_test_BDPI_RSPS_TCP_server
-EXE2 ?= exe_test_loadELF
+EXE1 ?= exe_Test_BDPI_RSPS_TCP_server
+EXE2 ?= exe_Test_loadELF
 
 .PHONY: help
 help:
@@ -60,9 +60,9 @@ $(EXE1): $(MAIN_C_EXE1)  $(SRCS_H_EXE1)  $(SRCS_C_EXE1)
 SRCS_C_EXE2  = ../src_C/loadELF.c
 SRCS_H_EXE2 += ../src_C/loadELF.h
 
-$(EXE2): test_loadELF.c  $(SRCS_H_EXE2)  $(SRCS_C_EXE2)
+$(EXE2): Test_loadELF.c  $(SRCS_H_EXE2)  $(SRCS_C_EXE2)
 	$(CC) $(CFLAGS) -o $(EXE2)  -I ../src_C/  \
-	  test_loadELF.c  $(SRCS_C_EXE2) \
+	  Test_loadELF.c  $(SRCS_C_EXE2) \
 	  $(LDLIBS)
 
 # ================================================================
