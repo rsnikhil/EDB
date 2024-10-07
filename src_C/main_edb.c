@@ -196,11 +196,16 @@ static
 int parse_GPR_num (const char *cmdline, const int index, uint64_t *p_gpr_num, int *p_index)
 {
     int delta;
+
     // Get first word on line, and index of char beyond it
     char word [CHARBUF_SIZE];
     int n = sscanf (cmdline + index, "%s%n", & word [0], & delta);
     if (n != 1) return STATUS_ERR;
     *p_index = index + delta;
+
+    // Work with lower-case only
+    for (int j = 0; word [j] != 0; j++)
+	word [j] = tolower (word [j]);
 
     // Check for GPR ABI name
     for (int j = 0; GPR_ABI_Names [j].name != NULL; j++)
@@ -238,11 +243,16 @@ static
 int parse_CSR_addr (const char *cmdline, const int index, uint64_t *p_csr_addr, int *p_index)
 {
     int delta;
+
     // Get first word on line, and index of char beyond it
     char word [CHARBUF_SIZE];
     int n = sscanf (cmdline + index, "%s%n", & word [0], & delta);
     if (n != 1) return STATUS_ERR;
     *p_index = index + delta;
+
+    // Work with lower-case only
+    for (int j = 0; word [j] != 0; j++)
+	word [j] = tolower (word [j]);
 
     // Check for CSR name
     for (int j = 0; CSR_Names [j].name != NULL; j++)
@@ -1065,9 +1075,6 @@ void interactive_command_loop ()
 	}
 	add_history (cmdline);
 	serialnum++;
-
-	for (int j = 0; cmdline [j] != 0; j++)
-	    cmdline [j] = tolower (cmdline [j]);
 
 	Cmd *p_cmd = parse_command (cmdline, & index);
 	if (p_cmd == NULL) {
