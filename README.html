@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="generator" content="Asciidoctor 2.0.20">
-<meta name="keywords" content="EDB, edbstub, GDB, gdbstub, RSP, Remote Serial Protocol, LLDB">
+<meta name="generator" content="Asciidoctor 2.0.23">
+<meta name="keywords" content="EDB, edbstub, GDB, LLDB, gdbstub, RSP, Remote Serial Protocol, RSPS">
 <meta name="author" content="Rishiyur S. Nikhil, Bluespec, Inc. (c) 2024">
 <title>EDB, an Economical/Elementary Debugger</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Open+Sans:300,300italic,400,400italic,600,600italic%7CNoto+Serif:400,400italic,700,700italic%7CDroid+Sans+Mono:400,700">
@@ -142,7 +142,7 @@ p a>code:hover{color:rgba(0,0,0,.9)}
 #content::before{content:none}
 #header>h1:first-child{color:rgba(0,0,0,.85);margin-top:2.25rem;margin-bottom:0}
 #header>h1:first-child+#toc{margin-top:8px;border-top:1px solid #dddddf}
-#header>h1:only-child,body.toc2 #header>h1:nth-last-child(2){border-bottom:1px solid #dddddf;padding-bottom:8px}
+#header>h1:only-child{border-bottom:1px solid #dddddf;padding-bottom:8px}
 #header .details{border-bottom:1px solid #dddddf;line-height:1.45;padding-top:.25em;padding-bottom:.25em;padding-left:.25em;color:rgba(0,0,0,.6);display:flex;flex-flow:row wrap}
 #header .details span:first-child{margin-left:-.125em}
 #header .details span.email a{color:rgba(0,0,0,.85)}
@@ -164,6 +164,7 @@ p a>code:hover{color:rgba(0,0,0,.9)}
 #toctitle{color:#7a2518;font-size:1.2em}
 @media screen and (min-width:768px){#toctitle{font-size:1.375em}
 body.toc2{padding-left:15em;padding-right:0}
+body.toc2 #header>h1:nth-last-child(2){border-bottom:1px solid #dddddf;padding-bottom:8px}
 #toc.toc2{margin-top:0!important;background:#f8f8f7;position:fixed;width:15em;left:0;top:0;border-right:1px solid #e7e7e9;border-top-width:0!important;border-bottom-width:0!important;z-index:1000;padding:1.25em 1em;height:100%;overflow:auto}
 #toc.toc2 #toctitle{margin-top:0;margin-bottom:.8rem;font-size:1.2em}
 #toc.toc2>ul{font-size:.9em;margin-bottom:0}
@@ -329,7 +330,7 @@ a.image{text-decoration:none;display:inline-block}
 a.image object{pointer-events:none}
 sup.footnote,sup.footnoteref{font-size:.875em;position:static;vertical-align:super}
 sup.footnote a,sup.footnoteref a{text-decoration:none}
-sup.footnote a:active,sup.footnoteref a:active{text-decoration:underline}
+sup.footnote a:active,sup.footnoteref a:active,#footnotes .footnote a:first-of-type:active{text-decoration:underline}
 #footnotes{padding-top:.75em;padding-bottom:.75em;margin-bottom:.625em}
 #footnotes hr{width:20%;min-width:6.25em;margin:-.25em 0 .75em;border-width:1px 0 0}
 #footnotes .footnote{padding:0 .375em 0 .225em;line-height:1.3334;font-size:.875em;margin-left:1.2em;margin-bottom:.2em}
@@ -440,8 +441,8 @@ body.book #toc,body.book #preamble,body.book h1.sect0,body.book .sect1>h2{page-b
 <h1>EDB, an Economical/Elementary Debugger</h1>
 <div class="details">
 <span id="author" class="author">Rishiyur S. Nikhil, Bluespec, Inc. (c) 2024</span><br>
-<span id="revnumber">version v1.01,</span>
-<span id="revdate">2024-09-11</span>
+<span id="revnumber">version v1.1,</span>
+<span id="revdate">2024-10-07</span>
 </div>
 </div>
 <div id="content">
@@ -467,13 +468,18 @@ and then viewed in any browser.</p>
 </div>
 </div>
 <div class="sect1">
-<h2 id="_overview">1. Overview</h2>
+<h2 id="_introduction">1. Introduction</h2>
 <div class="sectionbody">
+<div class="sect2">
+<h3 id="_edb_economicalelementary_debugger">1.1. EDB ("Economical/Elementary Debugger")</h3>
 <div class="paragraph">
 <p>EDB is an elementary debugger for debugging a RISC-V CPU
-implementation ("DUT") directly.  EDB and edbstub, here, are
-conceptually similar to GDB and gdbstub, except much smaller and
-simpler:</p>
+implementation ("DUT") directly.  The DUT can be a hardware design
+running in simulation (Verilog, Bluesim, &#8230;&#8203;), a C-based simulation
+model, or a hardware design running on real hardware (FPGA/ASIC).</p>
+</div>
+<div class="paragraph">
+<p>EDB is much simpler than GDB/LLDB:</p>
 </div>
 <div class="ulist">
 <ul>
@@ -481,34 +487,265 @@ simpler:</p>
 <p>Easily maintained by one person with basic C programming skills</p>
 </li>
 <li>
-<p>Can be used in practice for basic remote debugging</p>
+<p>Suitable as a teaching tool ("how remote debug works")</p>
 </li>
 <li>
-<p>Suitable as a teaching tool</p>
+<p>Very usable in practice for basic remote debugging</p>
+</li>
+<li>
+<p>Does not require installation of RISC-V toolchains (GDB or LLDB)</p>
 </li>
 </ul>
 </div>
 <div class="paragraph">
-<p>A later section of this document describes how to upgrade from EDB to
-GDB/LLDB.</p>
+<p>For a flavor of EDB&#8217;s debugging commands, see "Example use with RSPS
+TCP" section below (or type <code>help</code> in the EDB interactive command
+loop).</p>
 </div>
 <div class="paragraph">
-<p>Doing 'make' here will create one executables, <code>edb</code>, which is the EDB
-debugger program.  The DUT (remote CPU) must be started first (usually
-in another window), whether in simulation or hardware, and it should
-start listening on a TCP port as a TCP server.  Then, run <code>edb</code>, which
-will run as a TCP client and connect to that TCP port.</p>
+<p>EDB is far <em>less</em> capable than GDB/LLDB in many ways:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>RISC-V ISA-level debugging only.  GDB/LLDB have source-language
+debugging support for C, C++ and several other languages.</p>
+</li>
+<li>
+<p>No "watchpoints" (currently; may be added in future).</p>
+</li>
+<li>
+<p>No scripting.  GDB/LLDB support scripting, with their own language or in Python.</p>
+</li>
+<li>
+<p>GDB/LLDB support many different communication mechanisms for remote
+debugging.</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>Nevertheless, EDB is very useful and more than adequate during initial
+CPU bringup.</p>
+</div>
+<div class="paragraph">
+<p>EDB can be used with different "back ends", each implementing</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>a particular back end protocol,</p>
+</li>
+<li>
+<p>a particular communication mechanism for the protocol messages.</p>
+</li>
+</ul>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_back_end_protocols">1.2. Back-end Protocols</h3>
+<div class="ulist">
+<ul>
+<li>
+<p><code>RSPS</code>: Remote Serial Protocol/Structural.</p>
+</li>
+<li>
+<p><code>DMI</code>: the standard RISC-V Debug Module Interface (DMI)</p>
+</li>
+<li>
+<p>&#8230;&#8203; other protocols &#8230;&#8203;</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>RSPS is similar to GDB&#8217;s own Remote Serial Protocol (RSP) except that
+RSPS transactions are defined in terms sending/receiving a C struct,
+whereas RSP transactions are defined in terms of sending/receiving
+ASCII strings, requiring parsing/unparsing.  RSPS structs are
+described in <code>src_C/Dbg_Pkts.h</code>.  There is one struct for
+Debugger-to-DUT messages, and another for Debugger-from-DUT messages.</p>
+</div>
+<div class="paragraph">
+<p>In a hardare DUT, supporting RSPS is <em>much</em> simpler than supporting
+DMI, which requires a RISC-V Debug Module, which is a rather large and
+complex piece of additional hardware.</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_transportcommunication_mechanisms">1.3. Transport/communication mechanisms</h3>
+<div class="ulist">
+<ul>
+<li>
+<p>TCP/IP: will typically be used when the DUT is running in simulation.</p>
+</li>
+<li>
+<p>XDMA/PCIe: will typically be used when the DUT is on a Xilinx FPGA
+board plugged into a PCIe slot in a host. The debugger uses the
+Xilinx XDMA driver.</p>
+</li>
+<li>
+<p>&#8230;&#8203; other possible transport mechanisms (JTAG, USB, &#8230;&#8203;)</p>
+</li>
+</ul>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_summary">1.4. Summary</h3>
+<div class="paragraph">
+<p>EDB with RSPS is useful during initial bringup of a RISC-V CPU
+implementation, and perhaps even for long term use on a RISV-V CPU
+implementation, because:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>It does not need a RISC-V toolchain (GDB/LLDB RISC-V "aware" debugger)</p>
+</li>
+<li>
+<p>It does not need an intermediary <code>gdbstub</code> (needed by GDB/LLDB)</p>
+</li>
+<li>
+<p>It does not need a RISC-V Debug Module</p>
+</li>
+</ul>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_this_repository">2. This repository</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>This repo contains:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Source codes for the front-end of EDB (top-level: <code>edb.c</code>)</p>
+</li>
+<li>
+<p>Source code for a back-end for RSPS and TCP: <code>gdbstub_be_RSPS_TCP.c</code></p>
+</li>
+<li>
+<p>Makefile for EDB with RSPS_TCP backend, in <code>Build_EDB_RSPS_TCP</code></p>
+</li>
+<li>
+<p>Makefile for EDB with DMI_TCP backend, in <code>Build_EDB_DMI_TCP</code>.
+(uses code from <code>RISCV_gdbstub</code> repo)</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>It also contains:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p><code>BDPI_RSPS_TCP_server.c</code>: C code that can be imported into a CPU
+design written in the open-source Bluespec BSV High Level Hardware
+Design Language, so that the DUT can be debugged by EDB or GDB/LLDB
+with an RSPS_TCP back
+end. (<a href="https://github.com/rsnikhil/Book_BLang_RISCV">BSV language</a>,
+<a href="https://github.com/B-Lang-org/bsc"><em>bsc</em> compiler</a>)</p>
+</li>
+<li>
+<p>A standalone program <code>test/Test_BDPI_RSPS_TCP_server.c</code> that behaves
+like a "fake" RISC-V CPU responding to RSPS-TCP debug connection
+(from EDB/GDB/LLDB), to test the setup with EDB/GDB/LLDB.  This
+program can be built with <code>test/Makefile</code>.</p>
+</li>
+</ul>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<div class="title">Note</div>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>For all our Makefiles, it is safe to type <code>make</code> by itself; this never
+performs any action; it will just print a help message about available
+build targets.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+<div class="admonitionblock note">
+<table>
+<tr>
+<td class="icon">
+<div class="title">Note</div>
+</td>
+<td class="content">
+<div class="paragraph">
+<p>Any <code>gdbstub_be_RSPS_*</code> back end (where * is TCP, PCIe or other
+transport) can be connected to a gdbstub front-end which speaks RSP
+with GDB.  This creates a gdbstub that can connect GDB/LLDB to any DUT
+that supports RSPS.</p>
+</div>
+<div class="paragraph">
+<p>Such a gdbstub, with TCP transport, is available in
+<a href="https://github.com/bluespec/RISCV_gdbstub">another repo</a>.</p>
+</div>
+</td>
+</tr>
+</table>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_example_use_of_edb_with_rsps_tcp">3. Example use of EDB with RSPS-TCP</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>(A) Build the EDB program using <code>make all</code> in <code>Build_EDB_RSPS_TCP/</code>.</p>
+</div>
+<div class="paragraph">
+<p>(B) Build a DUT: either the standalone tester using <code>make
+    exe_test_BDPI_RSPS_TCP_server</code> in <code>test/Makefile</code>, or a RISC-V CPU
+    simulation that contains an RSCP_TCP server.</p>
+</div>
+<div class="paragraph">
+<p>Start the DUT (remote CPU) in its own terminal window.  It will start
+listening on a TCP port as a TCP server.</p>
+</div>
+<div class="paragraph">
+<p>Then, run <code>edb</code> in its own terminal window.  It will run as a TCP
+client and connect to that TCP port.</p>
 </div>
 <div class="paragraph">
 <p>Once connected, <code>edb</code> enters an interactive command loop with an
 <code>EDB:</code> prompt.  Type <code>help</code> for a list of available commands,
-including <code>quit</code> to quit.  Over time we expect gradually to expand the
-repertoire of interactive commands, including Memhex-file loading,
-resetting the remote CPU, etc.</p>
+including all the basic deugging commands:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>read/write GPRs, CSRs and memory</p>
+</li>
+<li>
+<p>load an ELF file into memory</p>
+</li>
+<li>
+<p>set/remove/list breakpoints</p>
+</li>
+<li>
+<p>stepi (step by exactly one instruction)</p>
+</li>
+<li>
+<p>continue (run until breakpoint or forced-halt)</p>
+</li>
+<li>
+<p>force-halt (when running)</p>
+</li>
+<li>
+<p>quit EDB</p>
+</li>
+</ul>
 </div>
 <div class="paragraph">
-<p>The hostname and TCP port for the server are currently wired into
-<code>edb.c</code> as:</p>
+<p>The hostname and TCP port for the CPU server are currently wired into
+the programs as:</p>
 </div>
 <div class="literalblock">
 <div class="content">
@@ -517,74 +754,36 @@ uint16_t server_listen_port = 30000;</pre>
 </div>
 </div>
 <div class="paragraph">
-<p>Modify these and rebuild <code>edb</code> if needed.</p>
+<p>If you need to change these, modify the sources for edb and the DUT,
+and rebuild.</p>
 </div>
 </div>
 </div>
 <div class="sect1">
-<h2 id="_edbstubs_software_and_hardware">2. edbstubs (software and hardware)</h2>
+<h2 id="_additional_elf_file_utilities_in_this_repository">4. Additional ELF-file utilities in this repository</h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>EDB-DUT communication uses packets described as C structs in
-<code>src_C/Dbg_Pkts.h</code>.  There is one type of struct for EDB-to-DUT, and
-another for EDB-from-DUT.  EDB does not care whether the remote DUT
-server fronts a software RISC-V simulation, a hardware simulation of
-RISC-V hardware, or actual RISC-V hardware, as long as it communicates
-using such packets.</p>
+<p>uThese programs are not directly related to EDB (although they use the
+same ELF-reading code as EDB).</p>
 </div>
 <div class="paragraph">
-<p>The file <code>test/edbstub.c</code> is an example of basic C server functions
-that can be incorporated into the front-end of a simulator or hardware
-controller.</p>
+<p><code>Build_ELF_to_Memhex32/Makefile</code> builds a standalone program that
+converts an ELF file into a Memhex32 file (memhex file where each
+entry is a 32-bit word).</p>
 </div>
 <div class="paragraph">
-<p>It is easy to create a hardware version of <code>edbstub.c</code>.</p>
-</div>
-</div>
-</div>
-<div class="sect1">
-<h2 id="_testing">3. Testing</h2>
-<div class="sectionbody">
-<div class="paragraph">
-<p>For testing EDB itself, and testing EDB-to-server communications, the
-<code>test/</code> directory contains a standalone server program
-<code>test_edbstub.c</code> containing a "pretend" CPU, and using the
-communications defined in <code>edbstub.c</code>.  <code>make</code> in the <code>test/</code>
-directory creates <code>exe_test_edbstub</code>.  It can act as a server for EDB
-and will respond to EDB commands.</p>
-</div>
-</div>
-</div>
-<div class="sect1">
-<h2 id="_upgrading_to_gdb_lldb">4. Upgrading to GDB, LLDB, ..</h2>
-<div class="sectionbody">
-<div class="paragraph">
-<p>EDB is very minimal, and only debugs machine code.  It is <strong>not</strong> a
-source-level debugger, nor does it do scripting, nor support any
-communication mechanism other than TCP.  For these richer facilities,
-you&#8217;ll need GDB, LLDB or some such more full-featured debugger.</p>
-</div>
-<div class="paragraph">
-<p>GDB/LLDB have a "remote debugging" mode where they can connect via TCP
-(or other communication mechanism) to a "gdbstub" which controls the
-DUT.  The GDB-to-gdbstub communication uses an ASCII protocol called
-RSP (Remote Serial Protocol.  Details can be found easily on the web.</p>
-</div>
-<div class="paragraph">
-<p>A gdbstub conceptually has a front-end to communicate with GDB, and a
-back-end to control the DUT.  Back-ends typically produce JTAG and/or
-DMI (RISC-V Debug Module Interface) transactions.  If you modify an
-existing gdbstub back end so that it sends/receives the packets
-described in <code>src_C/Dbg_Pkts.h</code>, then you can connect gdbstub to a DUT
-where you were using EDB, and thus upgrade to GDB/LLDB.</p>
+<p><code>test/Makefile</code> can build a program to dump information from an ELF
+file to the terminal.  This information is a small subset of what can
+be obtained by the standard <code>objdump</code> program.  We use this primarily
+to test the ELF-reading code used by EDB (for its "loadELF" command).</p>
 </div>
 </div>
 </div>
 </div>
 <div id="footer">
 <div id="footer-text">
-Version v1.01<br>
-Last updated 2024-09-11 14:37:46 -0400
+Version v1.1<br>
+Last updated 2024-10-07 15:57:05 -0400
 </div>
 </div>
 </body>

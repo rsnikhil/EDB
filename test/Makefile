@@ -1,28 +1,31 @@
 # Copyright (c) 2024 Rishiyur S. Nikhil and Bluespec, Inc.  All Rights Reserved.
 # ================================================================
 
+EXE1 ?= exe_test_BDPI_RSPS_TCP_server
+EXE2 ?= exe_test_loadELF
+
 .PHONY: help
 help:
 	@echo "Targets:"
-	@echo "  all                 make EXE      (= $(EXE))"
-	@echo "  test                run  EXE ARGS (= $(EXE) $(ARGS))"
-	@echo "  exe_test_edbstub    Builds a test server program to test edbstub"
-	@echo "  exe_test_loadELF    Builds a standalone test program for loadELF"
+	@echo "  $(EXE1)"
+	@echo "                  A test RSPS_TCP server program (fake CPU) to test EDB/GDB"
+	@echo "  $(EXE2)"
+	@echo "                  A standalone test program for loadELF"
 	@echo ""
-	@echo "  clean               Remove temporary files"
-	@echo "  full_clean          Restore directory to pristine state"
+	@echo "  Housekeeping/convenience:"
+	@echo "    exe1          make EXE1 (=  $(EXE1))"
+	@echo "    exe2          make EXE2 (=  $(EXE2))"
+	@echo "    all           make EXE1  EXE2"
+	@echo "    clean         Remove temporary files"
+	@echo "    full_clean    Restore directory to pristine state"
 
 # ================================================================
-# Temporary convenience
+# Convenience
 
-EXE  ?= exe_test_loadELF
-ARGS ?= RTOSDemo.elf
-
-.PHONY: all test
-all: $(EXE)
-
-test: $(EXE)
-	./$(EXE)  $(ARGS)
+.PHONY: all exe1 exe2
+exe1: $(EXE1)
+exe2: $(EXE2)
+all: $(EXE1) $(EXE2)
 
 # ================================================================
 # C compiler flags
@@ -37,29 +40,29 @@ CFLAGS += -I /opt/homebrew/include/libelf/
 CFLAGS += -L /opt/homebrew/lib
 
 LDLIBS  = -lelf
-LDLIBS += -lreadline
 
 # ================================================================
-# exe_test_edbstub
+# Tb RSPS TCP server
 
-SRCS_C_TEST_EDBSTUB  = edbstub.c
-SRCS_C_TEST_EDBSTUB += ../src_C/Dbg_Pkts.c
+MAIN_C_EXE1  = Test_BDPI_RSPS_TCP_server.c
+SRCS_C_EXE1 += ../src_C/BDPI_RSPS_TCP_server.c
+SRCS_C_EXE1 += ../src_C/Dbg_Pkts.c
 
-SRCS_H_TEST_EDBSTUB += ../src_C/Dbg_Pkts.h
+SRCS_H_EXE1 += ../src_C/Dbg_Pkts.h
 
-exe_test_edbstub: test_edbstub.c  $(SRCS_H_TEST_EDBSTUB)  $(SRCS_C_TEST_EDBSTUB)
-	$(CC) $(CFLAGS) -o  exe_test_edbstub  -I ../src_C/  \
-		test_edbstub.c  $(SRCS_C_TEST_EDBSTUB)
+$(EXE1): $(MAIN_C_EXE1)  $(SRCS_H_EXE1)  $(SRCS_C_EXE1)
+	$(CC) $(CFLAGS) -o $(EXE1)  -I ../src_C/  \
+		$(MAIN_C_EXE1)  $(SRCS_C_EXE1)
 
 # ================================================================
-# exe_test_loadELF
+# Tb loadELF
 
-SRCS_C_LOADELF  = ../src_C/loadELF.c
-SRCS_H_LOADELF += ../src_C/loadELF.h
+SRCS_C_EXE2  = ../src_C/loadELF.c
+SRCS_H_EXE2 += ../src_C/loadELF.h
 
-exe_test_loadELF: test_loadELF.c  $(SRCS_H_LOADELF)  $(SRCS_C_LOADELF)
-	$(CC) $(CFLAGS) -o  exe_test_loadELF  -I ../src_C/  \
-	  test_loadELF.c  $(SRCS_C_LOADELF) \
+$(EXE2): test_loadELF.c  $(SRCS_H_EXE2)  $(SRCS_C_EXE2)
+	$(CC) $(CFLAGS) -o $(EXE2)  -I ../src_C/  \
+	  test_loadELF.c  $(SRCS_C_EXE2) \
 	  $(LDLIBS)
 
 # ================================================================
@@ -70,6 +73,6 @@ clean:
 
 .PHONY: full_clean
 full_clean: clean
-	rm -r -f  exe_test_edbstub*  exe_test_loadELF*
+	rm -r -f  $(EXE1)  $(EXE1).dSYM  $(EXE2)  $(EXE2).dSYM
 
 # ================================================================

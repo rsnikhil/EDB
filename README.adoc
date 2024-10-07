@@ -1,14 +1,14 @@
 = EDB, an Economical/Elementary Debugger
 Rishiyur S. Nikhil, Bluespec, Inc. (c) 2024
-:revnumber: v1.01
-:revdate: 2024-09-11
+:revnumber: v1.1
+:revdate: 2024-10-07
 :sectnums:
 :THIS_FILE: README
 :imagesdir: Doc/Figs
 // :toc:
 // :toclevels: 3
 // :toc-title: Contents
-:keywords: EDB, edbstub, GDB, gdbstub, RSP, Remote Serial Protocol, LLDB
+:keywords: EDB, edbstub, GDB, LLDB, gdbstub, RSP, Remote Serial Protocol, RSPS
 
 // ================================================================
 
@@ -21,84 +21,181 @@ and then viewed in any browser.
 ====
 
 // ================================================================
-== Overview
+== Introduction
+
+// ----------------------------------------------------------------
+=== EDB ("Economical/Elementary Debugger")
 
 EDB is an elementary debugger for debugging a RISC-V CPU
-implementation ("DUT") directly.  EDB and edbstub, here, are
-conceptually similar to GDB and gdbstub, except much smaller and
-simpler:
+implementation ("DUT") directly.  The DUT can be a hardware design
+running in simulation (Verilog, Bluesim, ...), a C-based simulation
+model, or a hardware design running on real hardware (FPGA/ASIC).
+
+EDB is much simpler than GDB/LLDB:
 
 * Easily maintained by one person with basic C programming skills
-* Can be used in practice for basic remote debugging
-* Suitable as a teaching tool
+* Suitable as a teaching tool ("how remote debug works")
+* Very usable in practice for basic remote debugging
+* Does not require installation of RISC-V toolchains (GDB or LLDB)
 
-A later section of this document describes how to upgrade from EDB to
-GDB/LLDB.
+For a flavor of EDB's debugging commands, see "Example use with RSPS
+TCP" section below (or type `help` in the EDB interactive command
+loop).
 
-Doing 'make' here will create one executables, `edb`, which is the EDB
-debugger program.  The DUT (remote CPU) must be started first (usually
-in another window), whether in simulation or hardware, and it should
-start listening on a TCP port as a TCP server.  Then, run `edb`, which
-will run as a TCP client and connect to that TCP port.
+EDB is far _less_ capable than GDB/LLDB in many ways:
+
+* RISC-V ISA-level debugging only.  GDB/LLDB have source-language
+  debugging support for C, C++ and several other languages.
+
+* No "watchpoints" (currently; may be added in future).
+
+* No scripting.  GDB/LLDB support scripting, with their own language or in Python.
+
+* GDB/LLDB support many different communication mechanisms for remote
+  debugging.
+
+Nevertheless, EDB is very useful and more than adequate during initial
+CPU bringup.
+
+EDB can be used with different "back ends", each implementing
+
+* a particular back end protocol,
+* a particular communication mechanism for the protocol messages.
+
+// ----------------------------------------------------------------
+=== Back-end Protocols
+
+* `RSPS`: Remote Serial Protocol/Structural.
+
+* `DMI`: the standard RISC-V Debug Module Interface (DMI)
+
+* ... other protocols ...
+
+RSPS is similar to GDB's own Remote Serial Protocol (RSP) except that
+RSPS transactions are defined in terms sending/receiving a C struct,
+whereas RSP transactions are defined in terms of sending/receiving
+ASCII strings, requiring parsing/unparsing.  RSPS structs are
+described in `src_C/Dbg_Pkts.h`.  There is one struct for
+Debugger-to-DUT messages, and another for Debugger-from-DUT messages.
+
+In a hardare DUT, supporting RSPS is _much_ simpler than supporting
+DMI, which requires a RISC-V Debug Module, which is a rather large and
+complex piece of additional hardware.
+
+// ----------------------------------------------------------------
+=== Transport/communication mechanisms
+
+* TCP/IP: will typically be used when the DUT is running in simulation.
+
+* XDMA/PCIe: will typically be used when the DUT is on a Xilinx FPGA
+  board plugged into a PCIe slot in a host. The debugger uses the
+  Xilinx XDMA driver.
+
+* ... other possible transport mechanisms (JTAG, USB, ...)
+
+// ----------------------------------------------------------------
+=== Summary
+
+EDB with RSPS is useful during initial bringup of a RISC-V CPU
+implementation, and perhaps even for long term use on a RISV-V CPU
+implementation, because:
+
+* It does not need a RISC-V toolchain (GDB/LLDB RISC-V "aware" debugger)
+* It does not need an intermediary `gdbstub` (needed by GDB/LLDB)
+* It does not need a RISC-V Debug Module
+
+// ================================================================
+== This repository
+
+This repo contains:
+
+* Source codes for the front-end of EDB (top-level: `edb.c`)
+* Source code for a back-end for RSPS and TCP: `gdbstub_be_RSPS_TCP.c`
+* Makefile for EDB with RSPS_TCP backend, in `Build_EDB_RSPS_TCP`
+* Makefile for EDB with DMI_TCP backend, in `Build_EDB_DMI_TCP`.
+    (uses code from `RISCV_gdbstub` repo)
+
+It also contains:
+
+* `BDPI_RSPS_TCP_server.c`: C code that can be imported into a CPU
+  design written in the open-source Bluespec BSV High Level Hardware
+  Design Language, so that the DUT can be debugged by EDB or GDB/LLDB
+  with an RSPS_TCP back
+  end. (https://github.com/rsnikhil/Book_BLang_RISCV[BSV language],
+  https://github.com/B-Lang-org/bsc[_bsc_ compiler])
+
+* A standalone program `test/Test_BDPI_RSPS_TCP_server.c` that behaves
+  like a "fake" RISC-V CPU responding to RSPS-TCP debug connection
+  (from EDB/GDB/LLDB), to test the setup with EDB/GDB/LLDB.  This
+  program can be built with `test/Makefile`.
+
+[NOTE]
+====
+For all our Makefiles, it is safe to type `make` by itself; this never
+performs any action; it will just print a help message about available
+build targets.
+====
+
+[NOTE]
+====
+Any `gdbstub_be_RSPS_*` back end (where * is TCP, PCIe or other
+transport) can be connected to a gdbstub front-end which speaks RSP
+with GDB.  This creates a gdbstub that can connect GDB/LLDB to any DUT
+that supports RSPS.
+
+Such a gdbstub, with TCP transport, is available in
+https://github.com/bluespec/RISCV_gdbstub[another repo].
+====
+
+// ================================================================
+== Example use of EDB with RSPS-TCP
+
+(A) Build the EDB program using `make all` in `Build_EDB_RSPS_TCP/`.
+
+(B) Build a DUT: either the standalone tester using `make
+    exe_test_BDPI_RSPS_TCP_server` in `test/Makefile`, or a RISC-V CPU
+    simulation that contains an RSCP_TCP server.
+
+Start the DUT (remote CPU) in its own terminal window.  It will start
+listening on a TCP port as a TCP server.
+
+Then, run `edb` in its own terminal window.  It will run as a TCP
+client and connect to that TCP port.
 
 Once connected, `edb` enters an interactive command loop with an
 `EDB:` prompt.  Type `help` for a list of available commands,
-including `quit` to quit.  Over time we expect gradually to expand the
-repertoire of interactive commands, including Memhex-file loading,
-resetting the remote CPU, etc.
+including all the basic deugging commands:
 
-The hostname and TCP port for the server are currently wired into
-`edb.c` as:
+* read/write GPRs, CSRs and memory
+* load an ELF file into memory
+* set/remove/list breakpoints
+* stepi (step by exactly one instruction)
+* continue (run until breakpoint or forced-halt)
+* force-halt (when running)
+* quit EDB
+
+The hostname and TCP port for the CPU server are currently wired into
+the programs as:
 
     char     server_hostname [] = "127.0.0.1";    // (localhost)
     uint16_t server_listen_port = 30000;
 
-Modify these and rebuild `edb` if needed.
+If you need to change these, modify the sources for edb and the DUT,
+and rebuild.
 
 // ================================================================
-== edbstubs (software and hardware)
+== Additional ELF-file utilities in this repository
 
-EDB-DUT communication uses packets described as C structs in
-`src_C/Dbg_Pkts.h`.  There is one type of struct for EDB-to-DUT, and
-another for EDB-from-DUT.  EDB does not care whether the remote DUT
-server fronts a software RISC-V simulation, a hardware simulation of
-RISC-V hardware, or actual RISC-V hardware, as long as it communicates
-using such packets.
+uThese programs are not directly related to EDB (although they use the
+same ELF-reading code as EDB).
 
-The file `test/edbstub.c` is an example of basic C server functions
-that can be incorporated into the front-end of a simulator or hardware
-controller.
+`Build_ELF_to_Memhex32/Makefile` builds a standalone program that
+converts an ELF file into a Memhex32 file (memhex file where each
+entry is a 32-bit word).
 
-It is easy to create a hardware version of `edbstub.c`.
-
-// ================================================================
-== Testing
-
-For testing EDB itself, and testing EDB-to-server communications, the
-`test/` directory contains a standalone server program
-`test_edbstub.c` containing a "pretend" CPU, and using the
-communications defined in `edbstub.c`.  `make` in the `test/`
-directory creates `exe_test_edbstub`.  It can act as a server for EDB
-and will respond to EDB commands.
-
-// ================================================================
-== Upgrading to GDB, LLDB, ..
-
-EDB is very minimal, and only debugs machine code.  It is *not* a
-source-level debugger, nor does it do scripting, nor support any
-communication mechanism other than TCP.  For these richer facilities,
-you'll need GDB, LLDB or some such more full-featured debugger.
-
-GDB/LLDB have a "remote debugging" mode where they can connect via TCP
-(or other communication mechanism) to a "gdbstub" which controls the
-DUT.  The GDB-to-gdbstub communication uses an ASCII protocol called
-RSP (Remote Serial Protocol.  Details can be found easily on the web.
-
-A gdbstub conceptually has a front-end to communicate with GDB, and a
-back-end to control the DUT.  Back-ends typically produce JTAG and/or
-DMI (RISC-V Debug Module Interface) transactions.  If you modify an
-existing gdbstub back end so that it sends/receives the packets
-described in `src_C/Dbg_Pkts.h`, then you can connect gdbstub to a DUT
-where you were using EDB, and thus upgrade to GDB/LLDB.
+`test/Makefile` can build a program to dump information from an ELF
+file to the terminal.  This information is a small subset of what can
+be obtained by the standard `objdump` program.  We use this primarily
+to test the ELF-reading code used by EDB (for its "loadELF" command).
 
 // ================================================================
