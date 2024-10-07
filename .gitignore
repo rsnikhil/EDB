@@ -1,2 +1,4 @@
 edb_*
 exe_*
+ELFS
+*.lock.hjson

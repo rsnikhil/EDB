@@ -1,15 +1,17 @@
 # Copyright (c) 2024 Rishiyur S. Nikhil and Bluespec, Inc.  All Rights Reserved.
 # ================================================================
 
-EXE = edb_RSPS_TCP
+EXE = exe_gdbstub_RSPS_TCP
 
 .PHONY: help
 help:
 	@echo "Targets:"
-	@echo "  all                    make $(EXE)"
+	@echo "  $(EXE)    Standalone executable intermediary between GDB and dut"
 	@echo ""
-	@echo "  clean                  Remove temporary files"
-	@echo "  full_clean             Restore directory to pristine state"
+	@echo "  Housekeeping and convenience"
+	@echo "  all           make $(EXE)"
+	@echo "  clean         Remove temporary files"
+	@echo "  full_clean    Restore directory to pristine state"
 
 .PHONY: all
 all: $(EXE)
@@ -28,33 +30,34 @@ CFLAGS += -I /opt/homebrew/include/libelf/
 CFLAGS += -L /opt/homebrew/lib
 
 LDLIBS  = -lelf
-LDLIBS += -lreadline
 
 # ================================================================
 # Sources
 
+MAIN_C         = ../src_C/main_gdbstub_RSPS_TCP.c
+
 SRC_C          = ../src_C
 VENDOR_GDBSTUB = ../vendor/bluespec_RISCV_gdbstub
 
-MAIN_C      = $(SRC_C)/main_edb.c
+# SRCS_C += $(SRC_C)/ISA_Defs.c
+SRCS_C += $(SRC_C)/Dbg_Pkts.c
+SRCS_C += $(SRC_C)/TCP_Client_Lib.c
+SRCS_C += $(SRC_C)/loadELF.c
+SRCS_C += $(SRC_C)/gdbstub_be_RSPS_TCP.c
+SRCS_C += $(VENDOR_GDBSTUB)/gdbstub_fe.c
 
-SRCS_C_EDB += $(SRC_C)/Dbg_Pkts.c
-SRCS_C_EDB += $(SRC_C)/ISA_Defs.c
-SRCS_C_EDB += $(SRC_C)/TCP_Client_Lib.c
-SRCS_C_EDB += $(SRC_C)/loadELF.c
-SRCS_C_EDB += $(SRC_C)/gdbstub_be_RSPS_TCP.c
-
-SRCS_H_EDB  = $(SRC_C)/Status.h
-SRCS_H_EDB  = $(SRC_C)/Dbg_Pkts.h
-SRCS_H_EDB  = $(SRC_C)/ISA_Defs.h
-SRCS_H_EDB += $(SRC_C)/TCP_Client_Lib.h
-SRCS_H_EDB += $(SRC_C)/loadELF.h
-SRCS_H_EDB += $(VENDOR_GDBSTUB)/gdbstub_be.h
+# SRCS_H  = $(SRC_C)/ISA_Defs.h
+SRCS_H  = $(SRC_C)/Status.h
+SRCS_H  = $(SRC_C)/Dbg_Pkts.h
+SRCS_H += $(SRC_C)/TCP_Client_Lib.h
+SRCS_H += $(SRC_C)/loadELF.h
+SRCS_H += $(VENDOR_GDBSTUB)/gdbstub_be.h
+SRCS_H += $(VENDOR_GDBSTUB)/gdbstub_fe.h
 
 # ================================================================
 
-$(EXE):  $(MAIN_C)  $(SRCS_H_EDB)  $(SRCS_C_EDB)
-	$(CC) $(CFLAGS) -o $(EXE)  -I $(SRC_C)/  $(MAIN_C)  $(SRCS_C_EDB)  $(LDLIBS)
+$(EXE):  $(MAIN_C)  $(SRCS_H)  $(SRCS_C)
+	$(CC) $(CFLAGS) -o $(EXE)  -I $(SRC_C)  $(MAIN_C)  $(SRCS_C)  $(LDLIBS)
 
 # ================================================================
 

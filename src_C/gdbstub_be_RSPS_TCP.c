@@ -763,6 +763,17 @@ uint32_t  gdbstub_be_mem_read (const uint8_t   xlen,
 }
 
 // ================================================================
+// Read n_bytes from remote CPU's memory, by iterating read_internal().
+// This is used by loadELF for a readback check after loading an ELF into memory.
+
+int exec_read_buf (const uint64_t  start_addr,
+		   const int       n_bytes,
+		         uint8_t  *p_rdata)
+{
+    return gdbstub_be_mem_read (gdbstub_be_xlen, start_addr, (char *) p_rdata, n_bytes);
+}
+
+// ================================================================
 // Write a value into the RISC-V PC
 // Implemented as a write to DPC
 
@@ -915,6 +926,17 @@ uint32_t  gdbstub_be_mem_write (const uint8_t   xlen,
     return STATUS_OK;
 }
 
+// ================================================================
+// Write n_bytes to remote CPU's mem by iterating write_internal()
+// This is used by loadELF to load an ELf into memory.
+
+int exec_write_buf (const uint64_t  start_addr,
+		    const int       n_bytes,
+		    const uint8_t  *p_wdata)
+{
+    return gdbstub_be_mem_write (gdbstub_be_xlen, start_addr, (char *) p_wdata, n_bytes);
+}
+
 // ****************************************************************
 // ****************************************************************
 // ****************************************************************
@@ -938,13 +960,6 @@ uint32_t  gdbstub_be_dmi_write (uint16_t dmi_addr, uint32_t dmi_data)
 {
     fprintf (stdout, "UNIMPLEMENTED: %s (%0x, %0x)\n",
 	     __FUNCTION__, dmi_addr, dmi_data);
-    return STATUS_ERR;
-}
-
-bool  gdbstub_be_poll_preempt (bool include_commands)
-{
-    fprintf (stdout, "UNIMPLEMENTED: %s (%0d)\n",
-	     __FUNCTION__, include_commands);
     return STATUS_ERR;
 }
 

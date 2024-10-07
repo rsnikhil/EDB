@@ -109,7 +109,7 @@ implementation, because:
 
 This repo contains:
 
-* Source codes for the front-end of EDB (top-level: `edb.c`)
+* Source codes for the front-end of EDB (top-level: `main_edb.c`)
 * Source code for a back-end for RSPS and TCP: `gdbstub_be_RSPS_TCP.c`
 * Makefile for EDB with RSPS_TCP backend, in `Build_EDB_RSPS_TCP`
 * Makefile for EDB with DMI_TCP backend, in `Build_EDB_DMI_TCP`.

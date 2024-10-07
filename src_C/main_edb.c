@@ -540,17 +540,6 @@ void exec_read (const char         *cmdline,
 }
 
 // ================================================================
-// Read n_bytes from remote CPU's memory, by iterating read_internal().
-// This is used by loadELF for a readback check after loading an ELF into memory.
-
-int exec_read_buf (const uint64_t  start_addr,
-		   const int       n_bytes,
-		         uint8_t  *p_rdata)
-{
-    return gdbstub_be_mem_read (gdbstub_be_xlen, start_addr, (char *) p_rdata, n_bytes);
-}
-
-// ================================================================
 // Write GPR/CSR/Mem
 
 static
@@ -609,17 +598,6 @@ void exec_write (const char         *cmdline,
 	fprintf (stdout, "  OK\n");
     else
 	fprintf (stdout, "ERROR: 'write' did not get RW_OK response\n");
-}
-
-// ================================================================
-// Write n_bytes to remote CPU's mem by iterating write_internal()
-// This is used by loadELF to load an ELf into memory.
-
-int exec_write_buf (const uint64_t  start_addr,
-		    const int       n_bytes,
-		    const uint8_t  *p_wdata)
-{
-    return gdbstub_be_mem_write (gdbstub_be_xlen, start_addr, (char *) p_wdata, n_bytes);
 }
 
 // ================================================================

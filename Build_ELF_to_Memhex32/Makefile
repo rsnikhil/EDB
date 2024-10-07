@@ -32,16 +32,18 @@ LDLIBS  = -lelf
 # ================================================================
 # Sources
 
-SRC_C          = ../src_C
+SRC_C = ../src_C
 
-SRCS_C_E2MH += $(SRC_C)/loadELF.c
+MAIN_C = $(SRC_C)/main_Elf_to_Memhex32.c
 
-SRCS_H_E2MH  = $(SRC_C)/Status.h
-SRCS_H_E2MH += $(SRC_C)/loadELF.h
+SRCS_C += $(SRC_C)/loadELF.c
 
-exe_Elf_to_Memhex32: $(SRC_C)/Elf_to_Memhex32.c $(SRCS_H_E2MH) $(SRCS_C_E2MH)
-	$(CC) $(CFLAGS) -o exe_ELF_to_Memhex32 -I $(SRC_C)  $(SRC_C)/Elf_to_Memhex32.c \
-	  $(SRCS_C_E2MH)  $(LDLIBS)
+SRCS_H  = $(SRC_C)/Status.h
+SRCS_H += $(SRC_C)/loadELF.h
+
+$(EXE): $(MAIN_C) $(SRCS_H) $(SRCS_C)
+	$(CC) $(CFLAGS) -o exe_ELF_to_Memhex32 -I $(SRC_C)  $(MAIN_C) \
+	  $(SRCS_C)  $(LDLIBS)
 
 # ================================================================
 
@@ -51,6 +53,6 @@ clean:
 
 .PHONY: full_clean
 full_clean: clean
-	rm -r -f  exe_ELF_to_Memhex32*  *.memhex32
+	rm -r -f  $(EXE)  $(EXE).dSYM  *.memhex32
 
 # ================================================================

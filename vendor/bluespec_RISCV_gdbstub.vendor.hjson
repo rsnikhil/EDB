@@ -17,8 +17,6 @@
   // Pick specific files or subdirectories from upstream and
   // specify where to put them.
   mapping: [
-    {from:'src/gdbstub.c',        to: 'gdbstub.c'},
-    {from:'src/gdbstub.h',        to: 'gdbstub.h'},
     {from:'src/gdbstub_fe.c',     to: 'gdbstub_fe.c'},
     {from:'src/gdbstub_fe.h',     to: 'gdbstub_fe.h'},
     {from:'src/gdbstub_be.h',     to: 'gdbstub_be.h'}
