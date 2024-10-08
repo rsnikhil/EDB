@@ -316,14 +316,22 @@ const char *gdbstub_be_help (void)
 
 uint32_t  gdbstub_be_init (FILE *logfile, bool autoclose)
 {
+    int status;
     flog = logfile;
 
     // Open TCP connection to remote RISC-V server
-    int status = tcp_client_open (server_hostname, server_listen_port);
+    status = tcp_client_open (server_hostname, server_listen_port);
     if (status == STATUS_ERR) {
 	fprintf (stdout, "ERROR: tcp_client_open\n");
 	return status;
     }
+
+    // Force a halt, in case remote CPU is running
+    // (and also set dcsr.ebreak* bits)
+    fprintf (stdout, "Sending initial HALT request in case CPU is already running\n");
+    status = gdbstub_be_stop (gdbstub_be_xlen);
+    if (status != STATUS_OK)
+	fprintf (stdout, "ERROR: attemping to halt the CPU\n");
 
     return STATUS_OK;
 }
@@ -566,6 +574,9 @@ uint32_t  gdbstub_be_poll_for_halted (const uint8_t xlen)
 // Get stop-reason from HW
 // (HW normally stops due to GDB ^C, after a 'step', or at a breakpoint)
 // Implented as reading DCSR.CAUSE
+// Return 0 for OK; result is in p_stop_reason (RISC-V causes xlated to Unix signals)
+//       -1 for error
+//       -2 for not halted yet
 
 int32_t  gdbstub_be_get_stop_reason (const uint8_t  xlen,
 				     uint8_t       *p_stop_reason,
@@ -574,10 +585,27 @@ int32_t  gdbstub_be_get_stop_reason (const uint8_t  xlen,
     uint64_t dcsr;
     int status = gdbstub_be_CSR_read (xlen, addr_csr_dcsr, & dcsr);
     if (status != STATUS_OK)
-	return status;
+	return -1;
+
     uint32_t cause = DCSR_CAUSE (dcsr);
-    *p_stop_reason = cause;
-    return STATUS_OK;
+    switch (cause) {
+    case DM_DCSR_CAUSE_EBREAK:
+    case DM_DCSR_CAUSE_TRIGGER:
+	// SIGTRAP
+	*p_stop_reason = 0x05;
+	break;
+    case DM_DCSR_CAUSE_HALTREQ:
+	// SIGINT
+	*p_stop_reason = 0x02;
+	break;
+    case DM_DCSR_CAUSE_STEP:
+	// SIGTRAP
+	*p_stop_reason = 0x05;
+	break;
+    default:
+	*p_stop_reason = 0;
+    }
+    return 0;
 }
 
 // ================================================================

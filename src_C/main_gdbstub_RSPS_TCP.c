@@ -141,6 +141,7 @@ void *main_gdbstub_accept (void *arg)
 		continue;
 	    }
 
+	    fprintf (stdout, "Connection accepted\n");
 	    if (logfile) {
 		char buf[INET_ADDRSTRLEN];
 		const char *str = inet_ntop (AF_INET, & sa.sin_addr, buf, sizeof (buf));
@@ -187,6 +188,8 @@ int main (int argc, char **argv)
     gdbstub_params.logfile = logfile;
 
     // Open listening socket (connection from GDB)
+    fprintf (stdout, "Listening on tcp port %0d for GDB connection ...\n",
+	     default_gdb_portnum);
     int rc = gdbstub_start_tcp (default_gdb_portnum, & gdbstub_params);
     if (rc <= 0)
 	return 1;
