@@ -81,15 +81,33 @@
 
 // ================================================================
 // This file's verbosity
+// and functions to show entry/exit while debugging this code
 
 static
 int verbosity = 0;
+
+inline
+static
+void SHOW_ENTRY (const int v, const char *fn_name)
+{
+    if (verbosity >= v)
+	fprintf (stdout, "--> %s\n", fn_name);
+}
+
+inline
+static
+void SHOW_EXIT (const int v, const char *fn_name)
+{
+    if (verbosity >= v)
+	fprintf (stdout, "<-- %s\n", fn_name);
+}
 
 // ================================================================
 // Word bitwidth (32 for RV32, 64 for RV64)
 // This defaults to 64 (for RV64), but can be set to 32.
 // If gdbstub_be_elf_load() is invoked, it'll be picked up from the ELF file.
 
+// uint8_t gdbstub_be_xlen = 32;
 uint8_t gdbstub_be_xlen = 64;
 
 // ================================================================
@@ -112,27 +130,40 @@ typedef enum { DONT_POLL, DO_POLL } Poll;
 static
 int send_to_RISCV (const char *context, Dbg_to_CPU_Pkt *p_pkt_out)
 {
+    SHOW_ENTRY (3, __FUNCTION__);
+    int status = STATUS_OK;
+
     if (flog != NULL)
 	print_to_CPU_pkt (flog, "Sending ", p_pkt_out, "\n");
 
-    int status = tcp_client_send (sizeof (Dbg_to_CPU_Pkt),
-				  (uint8_t *) p_pkt_out);
+    status = tcp_client_send (sizeof (Dbg_to_CPU_Pkt),
+			      (uint8_t *) p_pkt_out);
     if (status == STATUS_ERR) {
-	fprintf (stdout, "ERROR: in %s.%s.tcp_client_send()\n", context, __FUNCTION__);
-	return STATUS_ERR;
+	fprintf (stdout,
+		 "ERROR: in %s.%s.tcp_client_send()\n", context, __FUNCTION__);
+	status = STATUS_ERR;
+	goto done;
     }
-    return STATUS_OK;
+
+ done:
+    SHOW_EXIT (3, __FUNCTION__);
+    return status;
 }
 
 static
-int recv_from_RISCV (const char *context, const Poll poll, Dbg_from_CPU_Pkt *p_pkt_in)
+int recv_from_RISCV (const char       *context,
+		     const Poll        poll,
+		     Dbg_from_CPU_Pkt *p_pkt_in)
 {
+    SHOW_ENTRY (3, __FUNCTION__);
+
     bool do_poll = (poll == DO_POLL);
     int  status  = tcp_client_recv (do_poll,
 				    sizeof (Dbg_from_CPU_Pkt),
 				    (uint8_t *) p_pkt_in);
     if (status == STATUS_ERR)
-	fprintf (stdout, "ERROR: %s.%s.tcp_client_recv()\n", context, __FUNCTION__);
+	fprintf (stdout,
+		 "ERROR: %s.%s.tcp_client_recv()\n", context, __FUNCTION__);
 
     else if (status == STATUS_OK) {
 	if (flog != NULL)
@@ -143,6 +174,8 @@ int recv_from_RISCV (const char *context, const Poll poll, Dbg_from_CPU_Pkt *p_p
 	// 'unavailable' is only legal if we are polling
 	assert (do_poll);
     }
+
+    SHOW_EXIT (3, __FUNCTION__);
     return status;
 }
 
@@ -192,7 +225,7 @@ void fprintf_dcsr (FILE *fd, const uint32_t dcsr)
     fprintf (fd, "\n");
 
     // Line 3
-    fprintf_dcsr_cause (fd, "        cause:", dcsr, "\n");
+    fprintf_dcsr_cause (fd, "        cause:", dcsr, "");
 
     fprintf (fd, " v:%0d",         ((dcsr >>  5) & 0x1));
     fprintf (fd, " mprven:%0d",    ((dcsr >>  4) & 0x1));
@@ -316,24 +349,31 @@ const char *gdbstub_be_help (void)
 
 uint32_t  gdbstub_be_init (FILE *logfile, bool autoclose)
 {
-    int status;
+    SHOW_ENTRY (1, __FUNCTION__);
+
+    int status = STATUS_OK;
     flog = logfile;
 
     // Open TCP connection to remote RISC-V server
     status = tcp_client_open (server_hostname, server_listen_port);
     if (status == STATUS_ERR) {
 	fprintf (stdout, "ERROR: tcp_client_open\n");
-	return status;
+	goto done;
     }
 
     // Force a halt, in case remote CPU is running
     // (and also set dcsr.ebreak* bits)
-    fprintf (stdout, "Sending initial HALT request in case CPU is already running\n");
+    fprintf (stdout,
+	     "Sending initial HALT request in case CPU already running\n");
     status = gdbstub_be_stop (gdbstub_be_xlen);
-    if (status != STATUS_OK)
+    if (status != STATUS_OK) {
 	fprintf (stdout, "ERROR: attemping to halt the CPU\n");
+	goto done;
+    }
 
-    return STATUS_OK;
+ done:
+    SHOW_EXIT (1, __FUNCTION__);
+    return status;
 }
 
 // ================================================================
@@ -341,7 +381,9 @@ uint32_t  gdbstub_be_init (FILE *logfile, bool autoclose)
 
 uint32_t  gdbstub_be_final (const uint8_t xlen)
 {
-    int             status;
+    SHOW_ENTRY (1, __FUNCTION__);
+
+    int             status = STATUS_OK;
     Dbg_to_CPU_Pkt  pkt_out;
 
     // Send QUIT
@@ -355,6 +397,8 @@ uint32_t  gdbstub_be_final (const uint8_t xlen)
     status = tcp_client_close (0);
     if (status == STATUS_ERR)
 	fprintf (stdout, "ERROR: tcp_client_close\n");
+
+    SHOW_EXIT (1, __FUNCTION__);
     return status;
 }
 
@@ -401,9 +445,13 @@ uint32_t gdbstub_be_verbosity (uint32_t n)
 
 uint32_t gdbstub_be_elf_load (const char *elf_filename)
 {
+    SHOW_ENTRY (1, __FUNCTION__);
+
     const int  verbosity         = 0;
     const bool do_readback_check = true;
     int status = loadELF (verbosity, do_readback_check, elf_filename);
+
+    SHOW_EXIT (1, __FUNCTION__);
     return status;
 }
 
@@ -412,7 +460,9 @@ uint32_t gdbstub_be_elf_load (const char *elf_filename)
 
 uint32_t gdbstub_be_continue (const uint8_t xlen)
 {
-    int              status;
+    SHOW_ENTRY (1, __FUNCTION__);
+
+    int              status = STATUS_OK;
     Dbg_to_CPU_Pkt   pkt_out;
     Dbg_from_CPU_Pkt pkt_in;
 
@@ -422,18 +472,23 @@ uint32_t gdbstub_be_continue (const uint8_t xlen)
     pkt_out.pkt_type = Dbg_to_CPU_RESUMEREQ;
     status = send_to_RISCV (__FUNCTION__, & pkt_out);
     if (status != STATUS_OK)
-	return status;
+	goto done;
 
     // ----------------
     // Await RUNNING confirmatino
     status = recv_from_RISCV (__FUNCTION__, DONT_POLL, & pkt_in);
-    if (status != STATUS_OK) return status;
+    if (status != STATUS_OK) goto done;
 
     if (pkt_in.pkt_type != Dbg_from_CPU_RUNNING) {
-	fprintf (stdout, "ERROR: continue command: did not get RUNNING confirmation\n");
-	return STATUS_ERR;
+	fprintf (stdout,
+		 "ERROR: 'continue': did not get RUNNING confirmation\n");
+	status = STATUS_ERR;
+	goto done;
     }
-    return STATUS_OK;
+
+ done:
+    SHOW_EXIT (1, __FUNCTION__);
+    return status;
 }
 
 // ================================================================
@@ -441,7 +496,9 @@ uint32_t gdbstub_be_continue (const uint8_t xlen)
 
 uint32_t  gdbstub_be_step (const uint8_t xlen)
 {
-    int              status;
+    SHOW_ENTRY (1, __FUNCTION__);
+
+    int              status = STATUS_OK;
     uint64_t         data;
     Dbg_to_CPU_Pkt   pkt_out;
     Dbg_from_CPU_Pkt pkt_in;
@@ -454,7 +511,7 @@ uint32_t  gdbstub_be_step (const uint8_t xlen)
     status = read_internal (Dbg_RW_CSR, addr_csr_dcsr, Dbg_MEM_4B, & data);
     if (status != STATUS_OK) {
 	fprintf (stdout, "ERROR: attempting to read CSR DCSR\n");
-	return status;
+	goto done;
     }
 
     // Set the 'step' bit
@@ -464,7 +521,7 @@ uint32_t  gdbstub_be_step (const uint8_t xlen)
     status = write_internal (Dbg_RW_CSR, addr_csr_dcsr, Dbg_MEM_4B, data);
     if (status != STATUS_OK) {
 	fprintf (stdout, "ERROR: attempting to read write DCSR\n");
-	return status;
+	goto done;
     }
 
     // ----------------
@@ -474,7 +531,8 @@ uint32_t  gdbstub_be_step (const uint8_t xlen)
     memset (& pkt_out, 0, sizeof (Dbg_to_CPU_Pkt));
     pkt_out.pkt_type = Dbg_to_CPU_RESUMEREQ;
     status = send_to_RISCV (__FUNCTION__, & pkt_out);
-    if (status != STATUS_OK) return status;
+    if (status != STATUS_OK)
+	goto done;
 
     // ----------------
     if (verbosity != 0)
@@ -483,8 +541,10 @@ uint32_t  gdbstub_be_step (const uint8_t xlen)
     status = recv_from_RISCV (__FUNCTION__, DONT_POLL, & pkt_in);
     if (status != STATUS_OK) return status;
     if (pkt_in.pkt_type != Dbg_from_CPU_RUNNING) {
-	fprintf (stdout, "ERROR: stepi command: did not get RUNNING confirmation\n");
-	return STATUS_ERR;
+	fprintf (stdout,
+		 "ERROR: stepi command: did not get RUNNING confirmation\n");
+	status = STATUS_ERR;
+	goto done;
     }
 
     // ----------------
@@ -494,8 +554,10 @@ uint32_t  gdbstub_be_step (const uint8_t xlen)
     status = recv_from_RISCV (__FUNCTION__, DONT_POLL, & pkt_in);
     if (status != STATUS_OK) return status;
     if (pkt_in.pkt_type != Dbg_from_CPU_HALTED) {
-	fprintf (stdout, "ERROR: stepi command: did not get HALTED confirmation\n");
-	return STATUS_ERR;
+	fprintf (stdout,
+		 "ERROR: stepi command: did not get HALTED confirmation\n");
+	status = STATUS_ERR;
+	goto done;
     }
 
     if (verbosity != 0) {
@@ -504,7 +566,9 @@ uint32_t  gdbstub_be_step (const uint8_t xlen)
 	read_and_fprintf_dpc ();
     }
 
-    return STATUS_OK;
+ done:
+    SHOW_EXIT (1, __FUNCTION__);
+    return status;
 }
 
 // ================================================================
@@ -512,6 +576,8 @@ uint32_t  gdbstub_be_step (const uint8_t xlen)
 
 uint32_t  gdbstub_be_stop (const uint8_t xlen)
 {
+    SHOW_ENTRY (1, __FUNCTION__);
+
     int              status;
     Dbg_to_CPU_Pkt   pkt_out;
     Dbg_from_CPU_Pkt pkt_in;
@@ -520,11 +586,11 @@ uint32_t  gdbstub_be_stop (const uint8_t xlen)
     memset (& pkt_out, 0, sizeof (Dbg_to_CPU_Pkt));
     pkt_out.pkt_type = Dbg_to_CPU_HALTREQ;
     status = send_to_RISCV (__FUNCTION__, & pkt_out);
-    if (status != STATUS_OK) return status;
+    if (status != STATUS_OK) goto done;
 
     // Wait for HALTED or ERR response
     status = recv_from_RISCV (__FUNCTION__, DONT_POLL, & pkt_in);
-    if (status != STATUS_OK) return status;
+    if (status != STATUS_OK) goto done;
 
     if (pkt_in.pkt_type == Dbg_from_CPU_HALTED) {
 	if (verbosity != 0) {
@@ -534,7 +600,8 @@ uint32_t  gdbstub_be_stop (const uint8_t xlen)
 	}
     }
     else if (pkt_in.pkt_type == Dbg_from_CPU_ERR) {
-	fprintf (stdout, "  HALTREQ response is 'error'; CPU may be halted already?\n");
+	fprintf (stdout,
+		 "  HALTREQ response is 'error'; may be halted already?\n");
 	status = STATUS_ERR;
     }
     else {
@@ -542,6 +609,9 @@ uint32_t  gdbstub_be_stop (const uint8_t xlen)
 	fprintf (stdout, "       Expecting HALTED confirmation\n");
 	status = STATUS_ERR;
     }
+
+ done:
+    SHOW_EXIT (1, __FUNCTION__);
     return status;
 }
 
@@ -550,11 +620,14 @@ uint32_t  gdbstub_be_stop (const uint8_t xlen)
 
 uint32_t  gdbstub_be_poll_for_halted (const uint8_t xlen)
 {
+    SHOW_ENTRY (1, __FUNCTION__);
+
     Dbg_from_CPU_Pkt  pkt_in;
+
     int status = recv_from_RISCV (__FUNCTION__, DO_POLL, & pkt_in);
 
     if (status != STATUS_OK)
-	return status;
+	goto done;
 
     else if (pkt_in.pkt_type == Dbg_from_CPU_HALTED) {
 	if (verbosity != 0) {
@@ -562,12 +635,15 @@ uint32_t  gdbstub_be_poll_for_halted (const uint8_t xlen)
 	    fprintf_dcsr (stdout, pkt_in.payload);
 	    read_and_fprintf_dpc ();
 	}
-	return STATUS_OK;
     }
     else {
-	fprintf (stdout, "ERROR: continue command: did not get HALTED confirmation\n");
-	return STATUS_ERR;
+	fprintf (stdout,
+		 "ERROR: continue command: did not get HALTED confirmation\n");
+	status = STATUS_ERR;
     }
+ done:
+    SHOW_EXIT (1, __FUNCTION__);
+    return status;
 }
 
 // ================================================================
@@ -582,10 +658,18 @@ int32_t  gdbstub_be_get_stop_reason (const uint8_t  xlen,
 				     uint8_t       *p_stop_reason,
 				     bool           commands_preempt)
 {
+    SHOW_ENTRY (1, __FUNCTION__);
+
     uint64_t dcsr;
+    int32_t  result = 0;
+
     int status = gdbstub_be_CSR_read (xlen, addr_csr_dcsr, & dcsr);
-    if (status != STATUS_OK)
-	return -1;
+    if (status != STATUS_OK) {
+	// TODO: we're interpreting ERR as 'not halted yet'
+	// but we should distinguish this from genuine errors
+	result = -2;
+	goto done;
+    }
 
     uint32_t cause = DCSR_CAUSE (dcsr);
     switch (cause) {
@@ -605,7 +689,10 @@ int32_t  gdbstub_be_get_stop_reason (const uint8_t  xlen,
     default:
 	*p_stop_reason = 0;
     }
-    return 0;
+
+ done:
+    SHOW_EXIT (1, __FUNCTION__);
+    return result;
 }
 
 // ================================================================
@@ -617,6 +704,8 @@ int32_t  gdbstub_be_get_stop_reason (const uint8_t  xlen,
 
 uint32_t  gdbstub_be_start_command (const uint8_t xlen)
 {
+    if (verbosity != 0)
+	fprintf (stdout, "----------------\n");
     if (flog != NULL)
 	fprintf (flog, "---------------- start command\n");
     return STATUS_OK;
@@ -628,43 +717,67 @@ uint32_t  gdbstub_be_start_command (const uint8_t xlen)
 
 uint32_t  gdbstub_be_PC_read (const uint8_t xlen, uint64_t *p_PC)
 {
-    return gdbstub_be_CSR_read (xlen, addr_csr_dpc, p_PC);
+    SHOW_ENTRY (1, __FUNCTION__);
+
+    int status = gdbstub_be_CSR_read (xlen, addr_csr_dpc, p_PC);
+
+    SHOW_EXIT (1, __FUNCTION__);
+    return status;
 }
 
 // ================================================================
 // Read a value from a GPR register in SoC
 
-uint32_t  gdbstub_be_GPR_read (const uint8_t xlen, uint8_t regnum, uint64_t *p_regval)
+uint32_t  gdbstub_be_GPR_read (const uint8_t xlen,
+			       uint8_t       regnum,
+			       uint64_t     *p_regval)
 {
+    SHOW_ENTRY (2, __FUNCTION__);
+
     *p_regval = 0;
 
     Dbg_RW_Target target  = Dbg_RW_GPR;
     Dbg_RW_Size   rw_size = ((xlen == 32) ? Dbg_MEM_4B : Dbg_MEM_8B);
     int status = read_internal (target, regnum, rw_size, p_regval);
+
+    SHOW_EXIT (2, __FUNCTION__);
     return status;
 }
 
 // ================================================================
 // Read a value from a FPR register in SoC
 
-uint32_t  gdbstub_be_FPR_read (const uint8_t xlen, uint8_t regnum, uint64_t *p_regval)
+uint32_t  gdbstub_be_FPR_read (const uint8_t xlen,
+			       uint8_t       regnum,
+			       uint64_t     *p_regval)
 {
+    SHOW_ENTRY (1, __FUNCTION__);
+
     *p_regval = 0;
 
     fprintf (stdout, "UNIMPLEMENTED: %s (..,%0d,..)\n", __FUNCTION__, regnum);
-    return STATUS_ERR;
+    int status = STATUS_ERR;
+
+    SHOW_EXIT (1, __FUNCTION__);
+    return status;
 }
 
 // ================================================================
 // Read a value from a CSR in SoC
 
-uint32_t  gdbstub_be_CSR_read (const uint8_t xlen, uint16_t regnum, uint64_t *p_regval)
+uint32_t  gdbstub_be_CSR_read (const uint8_t xlen,
+			       uint16_t      regnum,
+			       uint64_t     *p_regval)
 {
+    SHOW_ENTRY (1, __FUNCTION__);
+
     *p_regval = 0;
 
     Dbg_RW_Target target  = Dbg_RW_CSR;
     Dbg_RW_Size   rw_size = ((xlen == 32) ? Dbg_MEM_4B : Dbg_MEM_8B);
     int status = read_internal (target, regnum, rw_size, p_regval);
+
+    SHOW_EXIT (1, __FUNCTION__);
     return status;
 }
 
@@ -674,14 +787,21 @@ uint32_t  gdbstub_be_CSR_read (const uint8_t xlen, uint16_t regnum, uint64_t *p_
 
 uint32_t  gdbstub_be_PRIV_read (const uint8_t xlen, uint64_t *p_PRIV)
 {
+    SHOW_ENTRY (1, __FUNCTION__);
+
+    int      status = STATUS_OK;
     uint64_t dcsr;
-    int status = gdbstub_be_CSR_read (xlen, addr_csr_dcsr, & dcsr);
+
+    status = gdbstub_be_CSR_read (xlen, addr_csr_dcsr, & dcsr);
     if (status != STATUS_OK)
-	return status;
+	goto done;
 
     uint64_t mask = 3;
     *p_PRIV = (dcsr & mask);
-    return STATUS_OK;
+
+ done:
+    SHOW_EXIT (1, __FUNCTION__);
+    return status;
 }
 
 // ================================================================
@@ -704,24 +824,27 @@ uint32_t  gdbstub_be_mem_read (const uint8_t   xlen,
 			       char           *data,
 			       const size_t    len)
 {
-    if (len <= 0) {
-	fprintf (stdout, "%s: len <= 0; no-op\n", __FUNCTION__);
-	return STATUS_OK;
-    }
+    SHOW_ENTRY (1, __FUNCTION__);
 
+    int      status = STATUS_OK;
     uint64_t addr1  = addr;
     uint64_t addr2  = addr + len;
     uint64_t offset = 0;
-    int      status;
-    uint64_t rdata = 0;
+    uint64_t rdata  = 0;
+
+    if (len <= 0) {
+	fprintf (stdout, "%s: len <= 0; no-op\n", __FUNCTION__);
+	goto done;
+    }
 
     // Read leading misaligned 1-byte, if any
     if ((addr1 & 0x1) == 1) {
 	status = read_internal (Dbg_RW_MEM, addr1, Dbg_MEM_1B, & rdata);
 	if (status != STATUS_OK) {
-	    fprintf (stdout, "ERROR: unable to read mem byte at addr %0" PRIx64 "\n",
+	    fprintf (stdout,
+		     "ERROR: unable to read mem byte @ %0" PRIx64 "\n",
 		     addr1);
-	    return status;
+	    goto done;
 	}
 	memcpy (data + offset, & rdata, 1);
 	addr1  += 1;
@@ -729,15 +852,16 @@ uint32_t  gdbstub_be_mem_read (const uint8_t   xlen,
     }
     assert ((addr1 & 0x1) == 0);
     if (addr1 >= addr2)
-	return STATUS_OK;
+	goto done;
 
     // Read and show leading misaligned 2-bytes, if any
     if ((addr1 & 0x3) == 2) {
 	status = read_internal (Dbg_RW_MEM, addr1, Dbg_MEM_2B, & rdata);
 	if (status != STATUS_OK) {
-	    fprintf (stdout, "ERROR: unable to read 2 mem bytes at addr %0" PRIx64 "\n",
+	    fprintf (stdout,
+		     "ERROR: unable to read 2 mem bytes @ %0" PRIx64 "\n",
 		     addr1);
-	    return status;
+	    goto done;
 	}
 	memcpy (data + offset, & rdata, 2);
 	addr1  += 2;
@@ -745,15 +869,16 @@ uint32_t  gdbstub_be_mem_read (const uint8_t   xlen,
     }
     assert ((addr1 & 0x3) == 0);
     if (addr1 >= addr2)
-	return STATUS_OK;
+	goto done;
 
     // Read and show aligned 4-bytes, if any
     while ((addr2 - addr1) >= 4) {
 	status = read_internal (Dbg_RW_MEM, addr1, Dbg_MEM_4B, & rdata);
 	if (status != STATUS_OK) {
-	    fprintf (stdout, "ERROR: unable to read 4 mem bytes at addr %0" PRIx64 "\n",
+	    fprintf (stdout,
+		     "ERROR: unable to read 4 mem bytes @ %0" PRIx64 "\n",
 		     addr1);
-	    return status;
+	    goto done;
 	}
 	memcpy (data + offset, & rdata, 4);
 	addr1  += 4;
@@ -764,30 +889,35 @@ uint32_t  gdbstub_be_mem_read (const uint8_t   xlen,
     if ((addr2 - addr1) >= 2) {
 	status = read_internal (Dbg_RW_MEM, addr1, Dbg_MEM_2B, & rdata);
 	if (status != STATUS_OK) {
-	    fprintf (stdout, "ERROR: unable to read 2 mem bytes at addr %0" PRIx64 "\n",
+	    fprintf (stdout,
+		     "ERROR: unable to read 2 mem bytes @ %0" PRIx64 "\n",
 		     addr1);
-	    return status;
+	    goto done;
 	}
 	memcpy (data + offset, & rdata, 2);
 	addr1  += 2;
 	offset += 2;
     }
     if (addr1 >= addr2)
-	return STATUS_OK;
+	goto done;
 
     // Read and show trailing misaligned 1-byte, if any
     if ((addr2 - addr1) == 1) {
 	status = read_internal (Dbg_RW_MEM, addr1, Dbg_MEM_1B, & rdata);
 	if (status != STATUS_OK) {
-	    fprintf (stdout, "ERROR: unable to read 1 mem byte at addr %0" PRIx64 "\n",
+	    fprintf (stdout,
+		     "ERROR: unable to read 1 mem byte @ %0" PRIx64 "\n",
 		     addr1);
-	    return status;
+	    goto done;
 	}
 	memcpy (data + offset, & rdata, 1);
 	addr1  += 1;
  	offset += 1;
     }
-    return STATUS_OK;
+
+ done:
+    SHOW_EXIT (1, __FUNCTION__);
+    return status;
 }
 
 // ================================================================
@@ -798,7 +928,10 @@ int exec_read_buf (const uint64_t  start_addr,
 		   const int       n_bytes,
 		         uint8_t  *p_rdata)
 {
-    return gdbstub_be_mem_read (gdbstub_be_xlen, start_addr, (char *) p_rdata, n_bytes);
+    return gdbstub_be_mem_read (gdbstub_be_xlen,
+				start_addr,
+				(char *) p_rdata,
+				n_bytes);
 }
 
 // ================================================================
@@ -807,25 +940,40 @@ int exec_read_buf (const uint64_t  start_addr,
 
 uint32_t  gdbstub_be_PC_write (const uint8_t xlen, uint64_t regval)
 {
-    return gdbstub_be_CSR_write (xlen, addr_csr_dpc, regval);
+    SHOW_ENTRY (1, __FUNCTION__);
+
+    int status = gdbstub_be_CSR_write (xlen,
+				       addr_csr_dpc,
+				       regval);
+
+    SHOW_EXIT (1, __FUNCTION__);
+    return status;
 }
 
 // ================================================================
 // Write a value into a RISC-V GPR register
 
 
-uint32_t  gdbstub_be_GPR_write (const uint8_t xlen, uint8_t regnum, uint64_t regval)
+uint32_t  gdbstub_be_GPR_write (const uint8_t xlen,
+				uint8_t       regnum,
+				uint64_t      regval)
 {
+    SHOW_ENTRY (1, __FUNCTION__);
+
     Dbg_RW_Target target  = Dbg_RW_GPR;
     Dbg_RW_Size   rw_size = ((xlen == 32) ? Dbg_MEM_4B : Dbg_MEM_8B);
     int status = write_internal (target, regnum, rw_size, regval);
+
+    SHOW_EXIT (1, __FUNCTION__);
     return status;
 }
 
 // ================================================================
 // Write a value into a RISC-V FPR register
 
-uint32_t  gdbstub_be_FPR_write (const uint8_t xlen, uint8_t regnum, uint64_t regval)
+uint32_t  gdbstub_be_FPR_write (const uint8_t xlen,
+				uint8_t       regnum,
+				uint64_t      regval)
 {
     fprintf (stdout, "UNIMPLEMENTED: %s (..,%0d,%0" PRIx64 ")\n",
 	     __FUNCTION__, regnum, regval);
@@ -835,11 +983,17 @@ uint32_t  gdbstub_be_FPR_write (const uint8_t xlen, uint8_t regnum, uint64_t reg
 // ================================================================
 // Write a value into a RISC-V CSR register
 
-uint32_t  gdbstub_be_CSR_write (const uint8_t xlen, uint16_t regnum, uint64_t regval)
+uint32_t  gdbstub_be_CSR_write (const uint8_t xlen,
+				uint16_t      regnum,
+				uint64_t      regval)
 {
+    SHOW_ENTRY (1, __FUNCTION__);
+
     Dbg_RW_Target target  = Dbg_RW_CSR;
     Dbg_RW_Size   rw_size = ((xlen == 32) ? Dbg_MEM_4B : Dbg_MEM_8B);
     int status = write_internal (target, regnum, rw_size, regval);
+
+    SHOW_EXIT (1, __FUNCTION__);
     return status;
 }
 
@@ -849,14 +1003,22 @@ uint32_t  gdbstub_be_CSR_write (const uint8_t xlen, uint16_t regnum, uint64_t re
 
 uint32_t  gdbstub_be_PRIV_write (const uint8_t xlen, uint64_t regval)
 {
+    SHOW_ENTRY (1, __FUNCTION__);
+
+    int      status = STATUS_OK;
     uint64_t dcsr;
-    int status = gdbstub_be_CSR_read (xlen, addr_csr_dcsr, & dcsr);
+
+    status = gdbstub_be_CSR_read (xlen, addr_csr_dcsr, & dcsr);
     if (status != STATUS_OK)
-	return status;
+	goto done;
 
     uint64_t mask = 3;
     dcsr = ((dcsr & (~ mask)) | (regval & mask));
-    return gdbstub_be_CSR_write (xlen, addr_csr_dcsr, dcsr);
+    status =  gdbstub_be_CSR_write (xlen, addr_csr_dcsr, dcsr);
+
+ done:
+    SHOW_EXIT (1, __FUNCTION__);
+    return status;
 }
 
 // ================================================================
@@ -879,20 +1041,23 @@ uint32_t  gdbstub_be_mem_write (const uint8_t   xlen,
 				const char     *data,
 				const size_t    len)
 {
+    SHOW_ENTRY (1, __FUNCTION__);
+
     uint64_t addr1  = addr;
     uint64_t addr2  = addr + len;
     uint64_t offset = 0;
-    int      status;
-    uint64_t wdata = 0;
+    int      status = STATUS_OK;
+    uint64_t wdata  = 0;
 
     // Write leading misaligned 1-byte, if any
     if ((addr1 & 0x1) == 1) {
 	memcpy (& wdata, data + offset, 1);
 	status = write_internal (Dbg_RW_MEM, addr1, Dbg_MEM_1B, wdata);
 	if (status != STATUS_OK) {
-	    fprintf (stdout, "ERROR: unable to read mem byte at addr %0" PRIx64 "\n",
+	    fprintf (stdout,
+		     "ERROR: unable to read mem byte @ %0" PRIx64 "\n",
 		     addr1);
-	    return status;
+	    goto done;
 	}
 	addr1  += 1;
 	offset += 1;
@@ -904,9 +1069,10 @@ uint32_t  gdbstub_be_mem_write (const uint8_t   xlen,
 	memcpy (& wdata, data + offset, 2);
 	status = write_internal (Dbg_RW_MEM, addr1, Dbg_MEM_2B, wdata);
 	if (status != STATUS_OK) {
-	    fprintf (stdout, "ERROR: unable to read 2 mem bytes at addr %0" PRIx64 "\n",
+	    fprintf (stdout,
+		     "ERROR: unable to read 2 mem bytes @ %0" PRIx64 "\n",
 		     addr1);
-	    return status;
+	    goto done;
 	}
 	addr1  += 2;
 	offset += 2;
@@ -918,9 +1084,10 @@ uint32_t  gdbstub_be_mem_write (const uint8_t   xlen,
 	memcpy (& wdata, data + offset, 4);
 	status = write_internal (Dbg_RW_MEM, addr1, Dbg_MEM_4B, wdata);
 	if (status != STATUS_OK) {
-	    fprintf (stdout, "ERROR: unable to read 4 mem bytes at addr %0" PRIx64 "\n",
+	    fprintf (stdout,
+		     "ERROR: unable to read 4 mem bytes @ %0" PRIx64 "\n",
 		     addr1);
-	    return status;
+	    goto done;
 	}
 	addr1  += 4;
 	offset += 4;
@@ -931,9 +1098,10 @@ uint32_t  gdbstub_be_mem_write (const uint8_t   xlen,
 	memcpy (& wdata, data + offset, 2);
 	status = write_internal (Dbg_RW_MEM, addr1, Dbg_MEM_2B, wdata);
 	if (status != STATUS_OK) {
-	    fprintf (stdout, "ERROR: unable to read 2 mem bytes at addr %0" PRIx64 "\n",
+	    fprintf (stdout,
+		     "ERROR: unable to read 2 mem bytes @ %0" PRIx64 "\n",
 		     addr1);
-	    return status;
+	    goto done;
 	}
 	addr1  += 2;
 	offset += 2;
@@ -944,14 +1112,19 @@ uint32_t  gdbstub_be_mem_write (const uint8_t   xlen,
 	memcpy (& wdata, data + offset, 1);
 	status = write_internal (Dbg_RW_MEM, addr1, Dbg_MEM_1B, wdata);
 	if (status != STATUS_OK) {
-	    fprintf (stdout, "ERROR: unable to read 1 mem byte at addr %0" PRIx64 "\n",
+	    fprintf (stdout,
+		     "ERROR: unable to read 1 mem byte @ %0" PRIx64 "\n",
 		     addr1);
-	    return status;
+	    goto done;
 	}
 	addr1  += 1;
  	offset += 1;
     }
-    return STATUS_OK;
+
+ done:
+    SHOW_EXIT (1, __FUNCTION__);
+    return status;
+
 }
 
 // ================================================================
@@ -962,7 +1135,10 @@ int exec_write_buf (const uint64_t  start_addr,
 		    const int       n_bytes,
 		    const uint8_t  *p_wdata)
 {
-    return gdbstub_be_mem_write (gdbstub_be_xlen, start_addr, (char *) p_wdata, n_bytes);
+    return gdbstub_be_mem_write (gdbstub_be_xlen,
+				 start_addr,
+				 (char *) p_wdata,
+				 n_bytes);
 }
 
 // ****************************************************************
