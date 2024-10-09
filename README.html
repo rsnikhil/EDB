@@ -441,8 +441,8 @@ body.book #toc,body.book #preamble,body.book h1.sect0,body.book .sect1>h2{page-b
 <h1>EDB, an Economical/Elementary Debugger</h1>
 <div class="details">
 <span id="author" class="author">Rishiyur S. Nikhil, Bluespec, Inc. (c) 2024</span><br>
-<span id="revnumber">version v1.1,</span>
-<span id="revdate">2024-10-07</span>
+<span id="revnumber">version v1.2,</span>
+<span id="revdate">2024-10-09</span>
 </div>
 </div>
 <div id="content">
@@ -620,32 +620,50 @@ implementation, because:</p>
 <div class="ulist">
 <ul>
 <li>
-<p>Source codes for the front-end of EDB (top-level: <code>edb.c</code>)</p>
-</li>
-<li>
-<p>Source code for a back-end for RSPS and TCP: <code>gdbstub_be_RSPS_TCP.c</code></p>
-</li>
-<li>
-<p>Makefile for EDB with RSPS_TCP backend, in <code>Build_EDB_RSPS_TCP</code></p>
-</li>
-<li>
-<p>Makefile for EDB with DMI_TCP backend, in <code>Build_EDB_DMI_TCP</code>.
-(uses code from <code>RISCV_gdbstub</code> repo)</p>
-</li>
-</ul>
-</div>
-<div class="paragraph">
-<p>It also contains:</p>
-</div>
+<p>Source codes and build Makefiles for two alternative front-ends:</p>
 <div class="ulist">
 <ul>
 <li>
-<p><code>BDPI_RSPS_TCP_server.c</code>: C code that can be imported into a CPU
-design written in the open-source Bluespec BSV High Level Hardware
-Design Language, so that the DUT can be debugged by EDB or GDB/LLDB
-with an RSPS_TCP back
-end. (<a href="https://github.com/rsnikhil/Book_BLang_RISCV">BSV language</a>,
-<a href="https://github.com/B-Lang-org/bsc"><em>bsc</em> compiler</a>)</p>
+<p>Standalone EDB program.<br>
+Top-level is <code>src_C/main_edb.c</code><br>
+Build directory with Makefile: <code>Build_EDB_RSPS_TCP/</code></p>
+</li>
+<li>
+<p>gdbstub server to standard GDB.<br>
+Top-level is <code>src_C/main_gdbstub_RSPS_TCP.c</code><br>
+Build directory with Makefile: <code>Build_gdbstub_RSPS_TCP/</code></p>
+</li>
+</ul>
+</div>
+</li>
+<li>
+<p>Source code for a back-end for RSPS and TCP: <code>src_C/gdbstub_be_RSPS_TCP.c</code><br>
+This is shared by both front ends.</p>
+</li>
+<li>
+<p>Source code for interface between front-ends and back-ends:
+<code>vendor/bluespec_RISCV_gdbstub/gdbstub_be.h</code>.<br>
+This code is copied from <a href="https://github.com/bluespec/RISCV_gdbstub" class="bare">https://github.com/bluespec/RISCV_gdbstub</a>
+and should not be modified here.<br>
+That repo contains:</p>
+<div class="ulist">
+<ul>
+<li>
+<p>Code for an alternative back end, with the same <code>gdbstub_be.h</code>
+interface, that generates DMI transactions (Debug Module Interface
+for standard RISC-V Debug Module).</p>
+</li>
+<li>
+<p>gdbstub server to standard GDB with DMI back-end.</p>
+</li>
+</ul>
+</div>
+</li>
+<li>
+<p><code>src_C/BDPI_RSPS_TCP_server.c</code>: C code that can be imported into a CPU
+design written in Verilog/SystemVerilog/BSV so that the DUT can be
+debugged by EDB or GDB/LLDB with an RSPS_TCP back
+end.</p>
 </li>
 <li>
 <p>A standalone program <code>test/Test_BDPI_RSPS_TCP_server.c</code> that behaves
@@ -686,7 +704,7 @@ that supports RSPS.</p>
 </div>
 <div class="paragraph">
 <p>Such a gdbstub, with TCP transport, is available in
-<a href="https://github.com/bluespec/RISCV_gdbstub">another repo</a>.</p>
+<a href="https://github.com/bluespec/RISCV_gdbstub" class="bare">https://github.com/bluespec/RISCV_gdbstub</a>.</p>
 </div>
 </td>
 </tr>
@@ -755,7 +773,8 @@ uint16_t server_listen_port = 30000;</pre>
 </div>
 <div class="paragraph">
 <p>If you need to change these, modify the sources for edb and the DUT,
-and rebuild.</p>
+and rebuild.<br>
+(TODO: specify as optional command-line args to EDB.)</p>
 </div>
 </div>
 </div>
@@ -763,27 +782,30 @@ and rebuild.</p>
 <h2 id="_additional_elf_file_utilities_in_this_repository">4. Additional ELF-file utilities in this repository</h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>uThese programs are not directly related to EDB (although they use the
+<p>These programs are not directly related to EDB (although they use the
 same ELF-reading code as EDB).</p>
 </div>
 <div class="paragraph">
 <p><code>Build_ELF_to_Memhex32/Makefile</code> builds a standalone program that
 converts an ELF file into a Memhex32 file (memhex file where each
-entry is a 32-bit word).</p>
+entry is a 32-bit word).<br>
+Top-level is <code>src_C/main_Elf_to_Memhex32.c</code></p>
 </div>
 <div class="paragraph">
-<p><code>test/Makefile</code> can build a program to dump information from an ELF
-file to the terminal.  This information is a small subset of what can
-be obtained by the standard <code>objdump</code> program.  We use this primarily
-to test the ELF-reading code used by EDB (for its "loadELF" command).</p>
+<p><code>test/Makefile</code> has a <code>exe_Test_loadELF</code> target which is a standalone
+program to dump information from an ELF file to the terminal.  This
+information is a small subset of what can be obtained by the standard
+<code>objdump</code> program.  We use this primarily to test the ELF-reading code
+used by EDB (for its "loadELF" command).<br>
+Top-level is: <code>test/Test_loadELF.c</code></p>
 </div>
 </div>
 </div>
 </div>
 <div id="footer">
 <div id="footer-text">
-Version v1.1<br>
-Last updated 2024-10-07 15:57:05 -0400
+Version v1.2<br>
+Last updated 2024-10-09 12:22:19 -0400
 </div>
 </div>
 </body>
