@@ -135,20 +135,27 @@ int exec_read_buf (const uint64_t  start_addr,
 
 int main (int argc, char *argv[])
 {
-    if ((argc <= 1)
-	|| (argc != 3)
-	|| (strcmp (argv [0], "-h") == 0)
-	|| (strcmp (argv [1], "--help") == 0)) {
+    for (int j = 1; j < argc; j++) {
+	if ((strcmp (argv [j], "-h") == 0)
+	    || (strcmp (argv [j], "--help") == 0)) {
+	    print_usage (stdout, argc, argv);
+	    return 0;
+	}
+    }
+
+    if (argc != 3) {
+	fprintf (stdout, "ERROR: expecting two command-line args\n");
 	print_usage (stdout, argc, argv);
-	return 0;
+	return 1;
     }
 
     fo_memhex32 = fopen (argv [2], "w");
     if (fo_memhex32 == NULL) {
 	fprintf (stdout, "ERROR: unable to open output file for memhex32: %s\n", argv [2]);
+	return 1;
     }
 
-    const int  verbosity         = 0;
+    const int  verbosity         = 1;
     const bool do_readback_check = false;
     int status = loadELF (verbosity, do_readback_check, argv [1]);
 

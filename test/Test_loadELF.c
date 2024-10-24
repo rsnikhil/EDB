@@ -61,11 +61,18 @@ int exec_read_buf (const uint64_t  start_addr,
 
 int main (int argc, char *argv [])
 {
+    for (int j = 1; j < argc; j++) {
+	if ((strcmp (argv [j], "-h") == 0)
+	    || (strcmp (argv [j], "--help") == 0)) {
+	    print_usage (stdout, argc, argv);
+	    return 0;
+	}
+    }
+
     if ((argc != 2)
-	&& ((strcmp (argv [1], "--help") == 0)
-	    || (strcmp (argv [1], "-h") == 0))) {
+	fprintf (stdout, "ERROR: expecting one command-line arg\n");
 	print_usage (stdout, argc, argv);
-	return 0;
+	return 1;
     }
 
     const int  verbosity         = 1;
